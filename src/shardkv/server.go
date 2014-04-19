@@ -393,8 +393,7 @@ func StartServer(gid int64, shardmasters []string,
   gob.Register(make(map[int]map[string]string))
   gob.Register(LastOp{}) 
   gob.Register(make(map[int64]LastOp))
-
-
+    
   kv := new(ShardKV)
   kv.me = me
   kv.gid = gid

@@ -24,11 +24,15 @@ import "net"
 import "net/rpc"
 import "log"
 import "os"
+//import "io"
 import "syscall"
 import "sync"
 import "fmt"
 import "math/rand"
 import "time"
+import "strconv"
+import "bytes"
+import "encoding/gob"
 
 type Instance struct {
   // States for Proposer & learner
@@ -56,7 +60,7 @@ type Paxos struct {
   rpcCount int
   peers []string
   me int // index into peers[]
-
+  id int
 
   // Your data here.
   instances map[int]*Instance // seq -> Instance mapping
@@ -252,6 +256,17 @@ func (px *Paxos) Prepare(args *PreArgs, reply *PreReply) error {
     reply.Ok = true
     reply.Ts = ins.N_a
     reply.Value = ins.V_a
+    filename := "./paxos_log/ID"+strconv.Itoa(px.id)+"_INS"+strconv.Itoa(args.Seq)+".txt"
+    numFile, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY, 0666)
+    if err != nil {
+      log.Fatal(err)
+    }
+    buf := new(bytes.Buffer)
+    enc := gob.NewEncoder(buf)
+    enc.Encode(ins)
+    numFile.Write(buf.Bytes())
+    numFile.Close()
+
   } else {
     reply.Ok = false
   }
@@ -263,7 +278,6 @@ func (px *Paxos) Accept(args *AccArgs, reply *AccReply) error {
   px.mu.Lock()
   defer px.mu.Unlock()
   
-//  fmt.Printf("[ACCEPT] Me=%v, seq=%d\n\tValue=%+v\n", px.me, args.Seq, args.Value)
   ins := px.getInstance(args.Seq)
   if ins != nil && args.Ts >= ins.N_p {
     ins.N_p = args.Ts
@@ -271,6 +285,13 @@ func (px *Paxos) Accept(args *AccArgs, reply *AccReply) error {
     ins.V_a = args.Value
     reply.Ok = true
     reply.Ts = args.Ts
+    filename := "./paxos_log/ID"+strconv.Itoa(px.id)+"_INS"+strconv.Itoa(args.Seq)+".txt"
+    numFile, _ := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY, 0666)
+    buf := new(bytes.Buffer)
+    enc := gob.NewEncoder(buf)
+    enc.Encode(ins)
+    numFile.Write(buf.Bytes())
+    numFile.Close()
   } else {
     reply.Ok = false
     reply.Ts = args.Ts
@@ -283,12 +304,19 @@ func (px *Paxos) Decide(args *DecArgs, reply * DecReply) error {
   defer px.mu.Unlock()
     
   ins := px.getInstance(args.Seq)
-//  if ins.Decided && ins.Value != args.Value{
-//    log.Fatal("Instance decided again!!! Seq=",args.Seq,"\n\tins.Value=",ins.Value,"\n\targs.Value=", args.Value);
-//  }
   if ins != nil {
     ins.Decided = true
-    ins.Value = args.Value
+    ins.Value = args.Value 
+    filename := "./paxos_log/ID"+strconv.Itoa(px.id)+"_INS"+strconv.Itoa(args.Seq)+".txt"
+    numFile, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY, 0666)
+    if err != nil {
+      log.Fatal(err)
+    }
+    buf := new(bytes.Buffer)
+    enc := gob.NewEncoder(buf)
+    enc.Encode(ins)
+    numFile.Write(buf.Bytes())
+    numFile.Close()
   }
   px.minseq[args.Me] = args.Doneseq
   px.Forget()
@@ -427,7 +455,7 @@ func Make(peers []string, me int, rpcs *rpc.Server) *Paxos {
   px := &Paxos{}
   px.peers = peers
   px.me = me
-
+  px.id = int(rand.Int31())
 
   // Your initialization code here.
   px.instances = make(map[int]*Instance)

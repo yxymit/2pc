@@ -34,6 +34,15 @@ type DecArgs struct {
 type DecReply struct {
   Ok bool
 }
-         
+
+type PollArgs struct {
+  Seq int
+}
+
+type PollReply struct {
+  Ok bool
+  Value interface{}
+}
+
 const DelayInterval = time.Millisecond * 10
 const DelayMaxNum = 10

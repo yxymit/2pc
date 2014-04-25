@@ -34,10 +34,11 @@ import "strconv"
 import "bytes"
 import "encoding/gob"
 
+const Persistent=false
+
 type Instance struct {
   // States for Proposer & learner
   Decided bool
-  Value interface{}
   // States for Accepter
   N_p int64      // highest prepare seen
   N_a int64      // highest accept seen
@@ -60,7 +61,7 @@ type Paxos struct {
   rpcCount int
   peers []string
   me int // index into peers[]
-  id int
+  name string
 
   // Your data here.
   instances map[int]*Instance // seq -> Instance mapping
@@ -173,7 +174,6 @@ func (px *Paxos) Propose(seq int, v interface{}) {
     // Already collected enough prepare_OK, 
     // should send out Accept requests
     accResp := make(chan AccReply)
-//  fmt.Printf("[PROPOSE] Me=%v, seq=%d\n\tValue=%+v\n", px.me, seq, minval)
     for pid := 0; pid < len(px.peers); pid++ {
       args := AccArgs{seq, ts, minval}
       var reply AccReply
@@ -234,15 +234,28 @@ func (px *Paxos) getInstance(seq int) *Instance {
   if seq < px.Min() {
     return nil
   }
-
   _, ok := px.instances[seq]
+  if !ok && Persistent {
+    filename := "./paxos_log/"+px.name+"_INS"+strconv.Itoa(seq)+".txt"
+    if _, err := os.Stat(filename); err == nil {
+      numFile, err := os.Open(filename)
+      if err != nil {
+        log.Fatal(err)
+      }
+      px.instances[seq] = new(Instance)
+      dec:= gob.NewDecoder(numFile)
+      err = dec.Decode(px.instances[seq])
+      numFile.Close()
+      ok = true
+    }
+  }
   if !ok {
     px.instances[seq] = new(Instance)
     if px.instances[seq] == nil {
       log.Fatal("[getInstance] New failure");
     }
     px.instances[seq].Initialize()
-  }  
+  }
   return px.instances[seq]
 }
 
@@ -256,17 +269,18 @@ func (px *Paxos) Prepare(args *PreArgs, reply *PreReply) error {
     reply.Ok = true
     reply.Ts = ins.N_a
     reply.Value = ins.V_a
-    filename := "./paxos_log/ID"+strconv.Itoa(px.id)+"_INS"+strconv.Itoa(args.Seq)+".txt"
-    numFile, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY, 0666)
-    if err != nil {
-      log.Fatal(err)
+    if Persistent {
+      filename := "./paxos_log/"+px.name+"_INS"+strconv.Itoa(args.Seq)+".txt"
+      numFile, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY, 0666)
+      if err != nil {
+        log.Fatal(err)
+      }
+      buf := new(bytes.Buffer)
+      enc := gob.NewEncoder(buf)
+      enc.Encode(ins)
+      numFile.Write(buf.Bytes())
+      numFile.Close()
     }
-    buf := new(bytes.Buffer)
-    enc := gob.NewEncoder(buf)
-    enc.Encode(ins)
-    numFile.Write(buf.Bytes())
-    numFile.Close()
-
   } else {
     reply.Ok = false
   }
@@ -285,13 +299,15 @@ func (px *Paxos) Accept(args *AccArgs, reply *AccReply) error {
     ins.V_a = args.Value
     reply.Ok = true
     reply.Ts = args.Ts
-    filename := "./paxos_log/ID"+strconv.Itoa(px.id)+"_INS"+strconv.Itoa(args.Seq)+".txt"
-    numFile, _ := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY, 0666)
-    buf := new(bytes.Buffer)
-    enc := gob.NewEncoder(buf)
-    enc.Encode(ins)
-    numFile.Write(buf.Bytes())
-    numFile.Close()
+    if Persistent {
+      filename := "./paxos_log/"+px.name+"_INS"+strconv.Itoa(args.Seq)+".txt"
+      numFile, _ := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY, 0666)
+      buf := new(bytes.Buffer)
+      enc := gob.NewEncoder(buf)
+      enc.Encode(ins)
+      numFile.Write(buf.Bytes())
+      numFile.Close()
+    }
   } else {
     reply.Ok = false
     reply.Ts = args.Ts
@@ -306,17 +322,20 @@ func (px *Paxos) Decide(args *DecArgs, reply * DecReply) error {
   ins := px.getInstance(args.Seq)
   if ins != nil {
     ins.Decided = true
-    ins.Value = args.Value 
-    filename := "./paxos_log/ID"+strconv.Itoa(px.id)+"_INS"+strconv.Itoa(args.Seq)+".txt"
-    numFile, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY, 0666)
-    if err != nil {
-      log.Fatal(err)
+    ins.V_a = args.Value
+//    ins.Value = args.Value 
+    if Persistent {
+      filename := "./paxos_log/"+px.name+"_INS"+strconv.Itoa(args.Seq)+".txt"
+      numFile, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY, 0666)
+      if err != nil {
+        log.Fatal(err)
+      }
+      buf := new(bytes.Buffer)
+      enc := gob.NewEncoder(buf)
+      enc.Encode(ins)
+      numFile.Write(buf.Bytes())
+      numFile.Close()
     }
-    buf := new(bytes.Buffer)
-    enc := gob.NewEncoder(buf)
-    enc.Encode(ins)
-    numFile.Write(buf.Bytes())
-    numFile.Close()
   }
   px.minseq[args.Me] = args.Doneseq
   px.Forget()
@@ -327,6 +346,13 @@ func (px *Paxos) Forget() {
   min := px.Min()
   for k, _ := range px.instances {
     if k < min {
+      if Persistent {
+        filename := "./paxos_log/"+px.name+"_INS"+strconv.Itoa(k)+".txt"
+        if _, err := os.Stat(filename); os.IsNotExist(err) {
+          log.Fatal("Log record does not exist!")
+        }
+        os.Remove(filename)
+      }
       delete(px.instances, k) 
     }
   }
@@ -429,10 +455,47 @@ func (px *Paxos) Status(seq int) (bool, interface{}) {
   if !ok {
     return false, nil
   } else {
-    return ins.Decided, ins.Value
+    return ins.Decided, ins.V_a
   }
 }
 
+func (px *Paxos) RemoteStatus(args *PollArgs, reply *PollReply) error {
+  reply.Ok, reply.Value = px.Status(args.Seq)
+  return nil
+}
+
+// 
+// Poll() is conceptually the same as Status(). 
+// But Poll should ask all peers to make the 
+// decision
+//
+func (px *Paxos) Poll(seq int) (bool, interface{}) {
+  decided, value := px.Status(seq)
+  if decided {
+    return decided, value
+  } else {
+    // should ask peers for the status
+    for pid := 0; pid < len(px.peers); pid++ {
+      args := PollArgs{seq}
+      var reply PollReply
+      if pid != px.me {
+        go func(pid int) {
+          ok := call(px.peers[pid], "Paxos.RemoteStatus", &args, &reply)
+          if ok && reply.Ok {
+            px.mu.Lock()
+            defer px.mu.Unlock()
+            
+            ins := px.getInstance(seq)
+            ins.Decided = true
+            ins.V_a = reply.Value
+          }
+        }(pid)
+      }
+    }
+    time.Sleep(10 * time.Millisecond)
+    return px.Status(seq)
+  }
+}
 
 //
 // tell the peer to shut itself down.
@@ -446,6 +509,11 @@ func (px *Paxos) Kill() {
   }
 }
 
+func MakePaxos(peers []string, me int, rpcs *rpc.Server, name string) *Paxos {
+  px:= Make(peers, me, rpcs)
+  px.name = name
+  return px
+}
 //
 // the application wants to create a paxos peer.
 // the ports of all the paxos peers (including this one)
@@ -455,7 +523,6 @@ func Make(peers []string, me int, rpcs *rpc.Server) *Paxos {
   px := &Paxos{}
   px.peers = peers
   px.me = me
-  px.id = int(rand.Int31())
 
   // Your initialization code here.
   px.instances = make(map[int]*Instance)

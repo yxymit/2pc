@@ -10,6 +10,7 @@ type Clerk struct {
   mu sync.Mutex // one RPC at a time
   config shardmaster.Config
   groups map[int64][]string // gid -> servers[]
+  gids []int64
   txnid int
   me int
   rpcid int
@@ -18,24 +19,57 @@ type Clerk struct {
 func MakeClerk(me int, groups map[int64][]string) *Clerk {
   ck := new(Clerk)
   ck.groups = groups
+  ck.gids := make([]int64, len(groups))
+  i := 0
+  for k, _ := range groups {
+    gids[i] = k
+    i++
+  }
   ck.txnid = 0
   ck.me = me
   ck.rpcid = 0
   return ck
 }
 
+// statically map a shard to a group
+func (ck *Clerk) shard2group(shard int) int64 {
+  return gids[ shard % len(ck.gids) ]
+}
 
-func RunTxn(reqs []TxnArgs) {
-  var args InsOpArgs 
-  args.txn_id = txnid * 100 + ck.me
+func (ck *Clerk) SendTxns(reqs []ReqArgs) {
+  var txns map[int64]*TxnArgs // [gid] -> *TxnArgs
   for _, req := range reqs {
-     
-     args.txn.PushBack() 
+    gid := ck.shard2group(key2shard(req.Key))
+    _, ok := txns[gid]
+    if !ok {
+      txns[gid] = new(TxnArgs)
+      txns[gid].Txn_id = ck.txnid * 100 + ck.me
+      txns[gid].Txn.PushBack(req)
+    }
   }
-  type InsOpArgs struct {
-    txn_id int
-    txn list.List
+  // Must lock the groups in a fixed order
+  for _, gid := range gids {
+    txn, ok := txns[gid]
+    if ok {  // the gid is involved in this txn. send request
+      for _, srv := range groups[gid] {
+        var reply TxnReply 
+        ok := call(srv, "ShardKV.XXX", txn, &reply)
+        if ok && (reply.Err == OK) {
+          // the current group is successfully locked. 
+          // Proceed to the next group
+          break
+        }
+      }
+    }
   }
+}
+
+func (ck *Clerk) RunTxn(reqs []ReqArgs) {
+  SendTxns( reqs )
+  // All groups are locked.
+  // Periodically send out Prepare requests.
+  // TODO
+  ck.txnid ++
 }
 
 //

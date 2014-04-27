@@ -57,7 +57,7 @@ type TxnArgs struct {
   Txn list.List
 }
 
-type InsOpReply struct {
+type TxnReply struct {
   Err Err
 }
 
@@ -130,7 +130,4 @@ func key2shard(key string) int {
   return shard
 }
 
-// statically map a shard to a group
-func shard2group(shard int) int {
-  return shard % 10;
-}
+

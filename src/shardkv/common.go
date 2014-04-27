@@ -25,64 +25,16 @@ const (
 )
 type Err string
 
-type TxnArgs struct {
+type ReqArgs struct {
   Type string // Put, Get, Add
   Key string
   Value string
 }
 
-type PutArgs struct {
+type ReqReply struct {
+  Type string
   Key string
   Value string
-  DoHash bool  // For PutHash
-  // You'll have to add definitions here.
-  // Field names must start with capital letters,
-  // otherwise RPC will break.
-  Me int64
-  Rpcid int
-}
-
-type PutReply struct {
-  Err Err
-  PreviousValue string   // For PutHash
-}
-
-type GetArgs struct {
-  Key string
-  // You'll have to add definitions here.
-  Me int64
-  Rpcid int
-}
-
-type GetReply struct {
-  Err Err
-  Value string
-}
-
-type AddArgs struct {
-  Key string
-  Me int64
-  Rpcid int
-  
-  Value string
-}
-
-type CopyArgs struct {
-  ConfigNum int
-  Shardid int
-}
-
-type CopyReply struct {
-  Err Err
-  Shardid int
-  Shard map[string]string
-  LastOp map[int64]LastOp
-}
-
-func hash(s string) uint32 {
-  h := fnv.New32a()
-  h.Write([]byte(s))
-  return h.Sum32()
 }
 
 type LastOp struct {
@@ -98,9 +50,11 @@ type CopyData struct {
   lastOp map[int64]LastOp
 }
 
-type InsOpArgs struct {
-	Txn_id int
-	Txn list.List
+type TxnArgs struct {
+  Txn_id int
+  Rpcid int
+  Me int
+  Txn list.List
 }
 
 type InsOpReply struct {
@@ -108,18 +62,75 @@ type InsOpReply struct {
 }
 
 type PrepArgs struct {
-	Txn_id int
+  Txn_id int
+  Rpcid int
+  Me int
 }
 
 type PrepReply struct {
   Err Err
+  Replies list.List
 }
 
 type CommitArgs struct {
-	Txn_id int
-	Commit bool
+  Txn_id int
+  Commit bool
+  Rpcid int
+  Me int
 }
 
 type CommitReply struct {
   Err Err
+}
+
+//
+// call() sends an RPC to the rpcname handler on server srv
+// with arguments args, waits for the reply, and leaves the
+// reply in reply. the reply argument should be a pointer
+// to a reply structure.
+//
+// the return value is true if the server responded, and false
+// if call() was not able to contact the server. in particular,
+// the reply's contents are only valid if call() returned true.
+//
+// you should assume that call() will time out and return an
+// error after a while if it doesn't get a reply from the server.
+//
+// please use call() to send all RPCs, in client.go and server.go.
+// please don't change this function.
+//
+func call(srv string, rpcname string,
+          args interface{}, reply interface{}) bool {
+  c, errx := rpc.Dial("unix", srv)
+  if errx != nil {
+    return false
+  }
+  defer c.Close()
+    
+  err := c.Call(rpcname, args, reply)
+  if err == nil {
+    return true
+  }
+
+  fmt.Println(err)
+  return false
+}
+
+//
+// which shard is a key in?
+// please use this function,
+// and please do not change it.
+//
+func key2shard(key string) int {
+  shard := 0
+  if len(key) > 0 {
+    shard = int(key[0])
+  }
+  shard %= shardmaster.NShards
+  return shard
+}
+
+// statically map a shard to a group
+func shard2group(shard int) int {
+  return shard % 10;
 }

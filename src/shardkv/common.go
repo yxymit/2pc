@@ -83,8 +83,8 @@ type CopyData struct {
 }
 
 type InsOpArgs struct {
-	txn_id int
-	txn list.List
+	Txn_id int
+	Txn list.List
 }
 
 type InsOpReply struct {
@@ -92,7 +92,7 @@ type InsOpReply struct {
 }
 
 type PrepArgs struct {
-	txn_id int
+	Txn_id int
 }
 
 type PrepReply struct {
@@ -100,8 +100,8 @@ type PrepReply struct {
 }
 
 type CommitArgs struct {
-	txn_id int
-	commit bool
+	Txn_id int
+	Commit bool
 }
 
 type CommitReply struct {

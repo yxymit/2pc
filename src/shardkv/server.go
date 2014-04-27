@@ -55,6 +55,8 @@ type Op struct {
 	Reply_list list.List
 	
 	// for Type == commit
+	Commit bool
+
 
   // for Type == "Reconfig" only
   Preconfig shardmaster.Config
@@ -103,20 +105,20 @@ func (kv *ShardKV) insertPaxos(theop Op) Err {
     for {
       decided, decop := kv.px.Status(kv.exeseq)
       if decided {
-        dop := decop.(Op)
+        do_op := decop.(Op)
         kv.exeseq++
 				
-				switch dop.Type {
+				switch do_op.Type {
 				case "Lock":
-					kv.doLock()
+					kv.doLock(do_op)
 				case "Prep":
-					kv.doPrep()
+					kv.doPrep(do_op)
 				case "Commit":
-					kv.doCommit()
+					kv.doCommit(do_op)
 				default:
 				}
 
-				if dop.Op_id == theop.Op_id {
+				if do_op.Op_id == theop.Op_id {
 					return
 				} 
       } else {
@@ -130,54 +132,76 @@ func (kv *ShardKV) insertPaxos(theop Op) Err {
   }
 }
 
-func (kv *ShardKV) doLock() bool {
+func (kv *ShardKV) doLock(op Op) bool {
 	if !kv.dblock() {
 		kv.dblock = true
-		kv.txn_id = dop.Txn_id
-		kv.curr_txn = dop.Txn
-		/*
-		send_kill := make(chan bool)
-		recv_poll := make(chan Op)
-
-
-		// poll from peers
-		go func(send_kill chan bool, recv_poll chan Op){
-			for {
-				select {
-				case <- send_kill:
-					break
-				default:
-					decided, decop := kv.px.poll(kv.exeseq)
-					if decided {
-						recv_poll <- decop.(Op)
-						break
-					}
-				}
-			}(send_kill, recv_poll)
-		}
-
-		for {
-			select {
-			case theOp := <- recv_poll:
-				// go to next phase
-				break
-			default:
-				// next iteration
-			}
-
-		}
-		*/
+		kv.txn_id = op.Txn_id
+		kv.curr_txn = op.Txn
 	}
 }
 
-func (kv *ShardKV) doPrep() bool {	
-	if kv.dblock && kv.txn_id == dop.Txn_id{
-		return true
+func (kv *ShardKV) doPrep(op Op) bool {	
+	if kv.dblock && kv.txn_id == op.Txn_id {
+		kv.prepare_ok = op.Prepare_ok
+		kv.reply_list = op.Reply_list
+		return op.Prepare_ok
 	}
 }
 
 func (kv *ShardKV) doCommit() {
 	if kv.dblock && kv.txn_id == dop.Txn_id{
+		
+		for e := kv.reply_list.Front(); e != nil; e = e.Next() {
+		decOp := e.Value
+		switch theop := decOp.(type) {
+		default:
+			log.Fatalf("Operation %T not supported by the database", theOp)
+			prepare_ok = false
+
+		case PutArgs:
+			key := theop.Key
+			new_val := theop.Value
+			dohash := theop:DoHash
+			
+			shard_id := key2shard(key)
+			
+			curr_val := kv.db[shard_id][key]
+			
+			if kv.config.Shard[shard_id] == kv.gid {
+				if dohash {
+					if int(hash(curr_val + new_val)) < 0 {
+						// puthash new_val is not integer
+						prepare_ok = false
+						break
+					} 
+				} else {
+					i, err := strconv.Atoi(new_val)
+					if err != nil {
+						// put new_val is not integer
+						log.Fatal(err)
+						prepare_ok = false
+						break
+					} else {
+						// put new_val is less than 0
+						if i < 0 {
+							prepare_ok = false
+							break
+						} 
+					}
+				}
+				reply_list.PushBack(PutReply{Err: OK, PreviousValue: curr_val})
+			} else {
+				reply_list.PushBack(nil)
+			}
+		case GetArgs:
+			if kv.config.Shard[shard_id] == kv.gid {
+				reply_list.PushBack(GetReply{Err: OK, Value: curr_val})
+			} else {
+				reply_list.PushBack(nil)
+			}
+		}	
+	}
+
 		kv.dblock = false
 	}
 }
@@ -189,11 +213,11 @@ func (kv *ShardKV) insert_txn(args *InsOpArgs, reply *InsOpReply) {
 
 	opid := strconv.Itoa(time.Now().Nanosecond())
 
-	myop := Op{OpCode: "Lock", Txn: args.txn, Txn_id: args.txn_id}
+	myop := Op{OpCode: "Lock", Txn: args.Txn, Txn_id: args.Txn_id}
 
 	kv.insertPaxos(myop)
-
 }
+
 
 func (kv *ShardKV) prepare_handler(args *PrepArgs, reply *PrepReply) {
 	kv.mu.Lock()
@@ -259,9 +283,9 @@ func (kv *ShardKV) prepare_handler(args *PrepArgs, reply *PrepReply) {
 	myop var Op
 	
 	if prepare_ok {
-		myop = Op{OpCode: "Prep", Txn_id: args.txn_id, Prepare_ok: prepare_ok, Reply_list: reply_list}
+		myop = Op{OpCode: "Prep", Txn_id: args.Txn_id, Prepare_ok: prepare_ok, Reply_list: reply_list}
 	} else {
-		myop = Op{Opcode: "Prep", Txn_id: args.txn_id, Prepare_ok: prepare_ok}
+		myop = Op{Opcode: "Prep", Txn_id: args.Txn_id, prepare_ok: prepare_ok}
 	}
 
 	kv.insertPaxos(myop)
@@ -274,7 +298,7 @@ func (kv *ShardKV) commit_handler(args *CommitArgs, reply *CommitReply) {
 
 	opid := strconv.Itoa(time.Now().Nanosecond())
 
-	myop := Op{OpCode: "Commit", Txn_id: args.txn_id}
+	myop := Op{OpCode: "Commit", Txn_id: args.Txn_id, Comit: args.Commit}
 
 	kv.insertPaxos(myop)
 

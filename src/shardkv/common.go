@@ -1,6 +1,8 @@
 package shardkv
 import "hash/fnv"
 
+import "container/list"
+
 //
 // Sharded key/value server.
 // Lots of replica groups, each running op-at-a-time paxos.
@@ -17,6 +19,7 @@ const (
   ErrPendReconfig = "ErrPendReconfig"
   ErrDupReq = "ErrDupReq"
   ErrStaleReq = "ErrStaleReq"
+	ErrNoLock = "ErrNoLock"
 )
 type Err string
 
@@ -77,4 +80,30 @@ type LastOp struct {
 type CopyData struct {
   db map[int]map[string]string
   lastOp map[int64]LastOp
+}
+
+type InsOpArgs struct {
+	txn_id int
+	txn list.List
+}
+
+type InsOpReply struct {
+	Err Err
+}
+
+type PrepArgs struct {
+	txn_id int
+}
+
+type PrepReply struct {
+	Err Err
+}
+
+type CommitArgs struct {
+	txn_id int
+	commit bool
+}
+
+type CommitReply struct {
+	Err Err
 }

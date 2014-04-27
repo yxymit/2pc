@@ -44,15 +44,22 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 
 type Op struct {
   // Your definitions here.
-  Type string       // 'Get', 'Put', 'Reconfig'
-  Key string
-  Value string
-  DoHash bool
-  Cid int64         // the client issuing the request
-  Rpcid int
+  
+	Type string // 'lock', 'prep', 'commit/unlock'
+	Txn list.List
+	Txn_id int
+	Op_id string
+
+	// for Type == prep
+	Prepare_ok bool
+	Reply_list list.List
+	
+	// for Type == commit
+
   // for Type == "Reconfig" only
   Preconfig shardmaster.Config
   Afterconfig shardmaster.Config
+
   Db map[int]map[string]string
   LastOp map[int64]LastOp
 }
@@ -73,271 +80,212 @@ type ShardKV struct {
   lastOp map[int64]LastOp
   exeseq int    // the next seq to be executed.
   db map[int]map[string]string // db[shardID][key] -> value
+
+	// Transcation database here.
+	dblock bool
+	txn_id int
+	curr_txn list.List
+	reply_list list.List
 }
 
-func (kv *ShardKV) ValidReq(clientid int64, rpcid int, key string) Err {
-  if kv.config.Shards[key2shard(key)] != kv.gid {
-    return ErrWrongGroup 
-  }
-  lastOp, ok := kv.lastOp[clientid]
-  if !ok {
-    return OK
-  } else if rpcid == lastOp.Rpcid {
-    return ErrDupReq
-  } else if rpcid < lastOp.Rpcid {
-    return ErrStaleReq
-  } 
-
-  return OK
-}
-
-func (kv *ShardKV) Copy(args *CopyArgs, reply *CopyReply) error {
-  kv.mu.Lock()
-  defer kv.mu.Unlock()
-
-  reply.Shardid = args.Shardid
-  reply.LastOp = kv.lastOp
-  for _, lop := range kv.lastOp {
-    if lop.Err == "" {
-      log.Fatal("Copy. Err")
-    }
-  }
-  if args.ConfigNum > kv.config.Num {
-    reply.Err = "Config not upto date"
-  } else {
-    reply.Shard = kv.db[args.Shardid]
-    reply.Err = OK
-  }
-
-  return nil
-}
-
-// Will copy shards from remote group to local group
-func (kv *ShardKV) copydb(beforeconfig, afterconfig shardmaster.Config) (map[int]map[string]string, map[int64]LastOp) {
-  if beforeconfig.Num == 0 {
-    return nil, nil
-  }
-  // need to unlock since two groups may request shards from each other at 
-  // the same time, causing deadlocks
-  kv.mu.Unlock()
-  
-  repchan := make(chan CopyReply)
-  repcnt := 0
-  for sid := 0; sid < shardmaster.NShards; sid ++ {
-    if beforeconfig.Shards[sid] != kv.gid && afterconfig.Shards[sid] == kv.gid {
-      repcnt ++
-      // parallelize remote db copying. 
-      go func(sid int) {
-        gid := beforeconfig.Shards[sid]
-        servers := beforeconfig.Groups[gid]
-        for {
-          for _, srv := range servers {
-            args := CopyArgs{afterconfig.Num, sid}
-            var reply CopyReply
-            ok := call(srv, "ShardKV.Copy", &args, &reply)
-            if ok && reply.Err == OK {
-              repchan <- reply
-              return 
-            } 
-          }
-          time.Sleep(100 * time.Millisecond)
-        }
-      }(sid)
-    }
-  }
-  
-  mdb := make(map[int]map[string]string)
-  lastOp := make(map[int64]LastOp)
-  waitcnt := 0
-  if repcnt != 0 {
-    reccnt := 0
-    done := false
-    for !done {
-      select {
-        case reply := <-repchan :
-          reccnt ++ 
-//          mdb[reply.Shardid] = make(map[string]string)
-          mdb[reply.Shardid] = reply.Shard
-          for cid, lop := range reply.LastOp {
-            _, ok := lastOp[cid]
-            if lop.Err == "" {
-              log.Fatal("copyDB. Err")
-            }
-
-            if !ok || lop.Rpcid > lastOp[cid].Rpcid {
-              lastOp[cid] = lop
-
-            }
-          }
-          if reccnt == repcnt {
-            done = true
-          }
-        default :          
-          time.Sleep(100 * time.Millisecond)
-          waitcnt ++
-//          if waitcnt > 100 {
-//            log.Fatal("Waiting for too long!!!")
-//          }
-      }
-    }
-  }
-  kv.mu.Lock()
-  return mdb, lastOp
-}
 
 // Execute the Ops until theop is executed or a reconfig is encountered.
 // return (Value/PreviousValue, OK) if theop is executed.
 // return ("", "Reconfig") if reconfig is encountered.
-func (kv *ShardKV) execute(theop Op) (string, Err) {
-  done := false
-  to := 10 * time.Millisecond
-  value := ""
-  var err Err
-  for !done {
+func (kv *ShardKV) insertPaxos(theop Op) Err {
+  for {
+		if kv.dblock && txn_id != theop.Txn_id {
+			return ErrNoLock
+		}
+
     kv.px.Start(kv.exeseq, theop)
+		to := 10 * time.Millisecond
     for {
       decided, decop := kv.px.Status(kv.exeseq)
-      trycnt := 0
       if decided {
         dop := decop.(Op)
-        shardid := key2shard(dop.Key)
-        kv.exeseq ++
-        if dop.Type == "Put" {
-          preValue, ok := kv.db[shardid][dop.Key]
-          if !ok {
-            kv.db[shardid][dop.Key] = ""
-            preValue = ""
-          }
-          if dop.DoHash {
-            kv.db[shardid][dop.Key] = strconv.Itoa(int(hash(preValue + dop.Value)))
-          } else {
-            kv.db[shardid][dop.Key] = dop.Value
-          }
-          value = preValue
-          err = OK
-        } else if dop.Type == "Get" {
-          v, ok := kv.db[shardid][dop.Key]
-          value = v
-          if ok {
-            err = OK
-          } else {
-            err = ErrNoKey
-          }
-        } else if dop.Type == "Reconfig" {
-          if kv.config.Num != dop.Preconfig.Num {
-            log.Fatal("Beforeconfig does not match.")
-          }
-          if kv.config.Num + 1 != dop.Afterconfig.Num {
-            log.Fatal("Afterconfig is wrong.")
-          }
-          // update the current config. 
-          // update kv.db
-          // update kv.lastOp
-          kv.config = dop.Afterconfig
-          for sid, shard := range dop.Db {
-            kv.db[sid] = shard
-          }
-          for cid, lastOp := range dop.LastOp {
-            _, ok := kv.lastOp[cid]
-            if !ok || kv.lastOp[cid].Rpcid < lastOp.Rpcid {
-              kv.lastOp[cid] = lastOp
-            }
-          }
-          err = ErrPendReconfig
-        }
-        if dop.Type == "Get" || dop.Type == "Put" {
-          _, ok := kv.lastOp[dop.Cid]
-          if ok && dop.Rpcid <= kv.lastOp[dop.Cid].Rpcid {
-            log.Fatal("Missing Op too old")
-          }
-          kv.lastOp[dop.Cid] = LastOp{dop.Rpcid, dop, err, value}
-        }
-        if dop.Cid == theop.Cid && dop.Rpcid == theop.Rpcid || dop.Type == "Reconfig" {
-          done = true
-        }
-        break
+        kv.exeseq++
+				
+				switch dop.Type {
+				case "Lock":
+					kv.doLock()
+				case "Prep":
+					kv.doPrep()
+				case "Commit":
+					kv.doCommit()
+				default:
+				}
+
+				if dop.Op_id == theop.Op_id {
+					return
+				} 
       } else {
         time.Sleep(to)
         if to < time.Second {
           to *= 2
-        } else {
-          trycnt ++
-//          if trycnt > 5 {
-//            log.Fatal("[paxos] take too long to decide")
-//          }
-        }
+        } 
       }
     }
+
   }
-  if err == "" {
-    log.Fatal("[execute] Err is empty")
-  }
-  return value, err
 }
 
-func (kv *ShardKV) Get(args *GetArgs, reply *GetReply) error {
-  // Your code here.
-  kv.mu.Lock()
-  defer kv.mu.Unlock()
+func (kv *ShardKV) doLock() bool {
+	if !kv.dblock() {
+		kv.dblock = true
+		kv.txn_id = dop.Txn_id
+		kv.curr_txn = dop.Txn
+		/*
+		send_kill := make(chan bool)
+		recv_poll := make(chan Op)
 
-//  DPrintfCLR(2, "[Server Get] gid=%d,server=%d args=%+v", 
-//    kv.gid, kv.me, args)
-  
-  err := kv.ValidReq(args.Me, args.Rpcid, args.Key)
-  if err == ErrDupReq {
-    lastOp := kv.lastOp[args.Me]
-    reply.Err = lastOp.Err
-    reply.Value = lastOp.Value
-    return nil 
-  } else if err != OK {
-    reply.Err = err
-    return nil
-  }
-  var op Op
-  op.Type = "Get"
-  op.Key = args.Key
-  op.Cid = args.Me
-  op.Rpcid = args.Rpcid
 
-//  kv.propose(op)
-  value, err := kv.execute(op)
-  reply.Value = value
-  reply.Err = err
-  if err == "OK" {
-    kv.lastOp[args.Me] = LastOp{args.Rpcid, op, err, value}
-  }
-  return nil
+		// poll from peers
+		go func(send_kill chan bool, recv_poll chan Op){
+			for {
+				select {
+				case <- send_kill:
+					break
+				default:
+					decided, decop := kv.px.poll(kv.exeseq)
+					if decided {
+						recv_poll <- decop.(Op)
+						break
+					}
+				}
+			}(send_kill, recv_poll)
+		}
+
+		for {
+			select {
+			case theOp := <- recv_poll:
+				// go to next phase
+				break
+			default:
+				// next iteration
+			}
+
+		}
+		*/
+	}
 }
 
-func (kv *ShardKV) Put(args *PutArgs, reply *PutReply) error {
-  // Your code here.
-  kv.mu.Lock()
-  defer kv.mu.Unlock()
-  
-  err := kv.ValidReq(args.Me, args.Rpcid, args.Key)
-  if err == ErrDupReq {
-    lastOp := kv.lastOp[args.Me]
-    reply.Err = lastOp.Err
-    reply.PreviousValue = lastOp.Value
-    return nil
-  } else if err != OK {
-    reply.Err = err
-    return nil
-  }
- 
-  var op Op
-  op.Type = "Put"
-  op.Key = args.Key
-  op.Value = args.Value
-  op.DoHash = args.DoHash
-  op.Cid = args.Me
-  op.Rpcid = args.Rpcid
-
-  value, err := kv.execute(op)
-  reply.PreviousValue = value
-  reply.Err = err
-  return nil
+func (kv *ShardKV) doPrep() bool {	
+	if kv.dblock && kv.txn_id == dop.Txn_id{
+		return true
+	}
 }
+
+func (kv *ShardKV) doCommit() {
+	if kv.dblock && kv.txn_id == dop.Txn_id{
+		kv.dblock = false
+	}
+}
+
+
+func (kv *ShardKV) insert_txn(args *InsOpArgs, reply *InsOpReply) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+
+	opid := strconv.Itoa(time.Now().Nanosecond())
+
+	myop := Op{OpCode: "Lock", Txn: args.txn, Txn_id: args.txn_id}
+
+	kv.insertPaxos(myop)
+
+}
+
+func (kv *ShardKV) prepare_handler(args *PrepArgs, reply *PrepReply) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+
+	prepare_ok := true
+
+	reply_list := list.New()
+
+	for e := kv.curr_txn.Front(); e != nil; e = e.Next() {
+		decOp := e.Value
+		switch theop := decOp.(type) {
+		default:
+			log.Fatalf("Operation %T not supported by the database", theOp)
+			prepare_ok = false
+
+		case PutArgs:
+			key := theop.Key
+			new_val := theop.Value
+			dohash := theop:DoHash
+			
+			shard_id := key2shard(key)
+			
+			curr_val := kv.db[shard_id][key]
+			
+			if kv.config.Shard[shard_id] == kv.gid {
+				if dohash {
+					if int(hash(curr_val + new_val)) < 0 {
+						// puthash new_val is not integer
+						prepare_ok = false
+						break
+					} 
+				} else {
+					i, err := strconv.Atoi(new_val)
+					if err != nil {
+						// put new_val is not integer
+						log.Fatal(err)
+						prepare_ok = false
+						break
+					} else {
+						// put new_val is less than 0
+						if i < 0 {
+							prepare_ok = false
+							break
+						} 
+					}
+				}
+				reply_list.PushBack(PutReply{Err: OK, PreviousValue: curr_val})
+			} else {
+				reply_list.PushBack(nil)
+			}
+		case GetArgs:
+			if kv.config.Shard[shard_id] == kv.gid {
+				reply_list.PushBack(GetReply{Err: OK, Value: curr_val})
+			} else {
+				reply_list.PushBack(nil)
+			}
+		}	
+	}
+
+	opid := strconv.Itoa(time.Now().Nanosecond())
+	
+	myop var Op
+	
+	if prepare_ok {
+		myop = Op{OpCode: "Prep", Txn_id: args.txn_id, Prepare_ok: prepare_ok, Reply_list: reply_list}
+	} else {
+		myop = Op{Opcode: "Prep", Txn_id: args.txn_id, Prepare_ok: prepare_ok}
+	}
+
+	kv.insertPaxos(myop)
+
+}
+
+func (kv *ShardKV) commit_handler(args *CommitArgs, reply *CommitReply) {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+
+	opid := strconv.Itoa(time.Now().Nanosecond())
+
+	myop := Op{OpCode: "Commit", Txn_id: args.txn_id}
+
+	kv.insertPaxos(myop)
+
+}
+
+func (kv *Shard) poll(){
+	if kv.px.poll(kv.exeseq) {
+		kv.execute()
+	}
+}
+
 
 //
 // Ask the shardmaster if there's a new configuration;
@@ -399,6 +347,8 @@ func StartServer(gid int64, shardmasters []string,
   kv.gid = gid
   kv.sm = shardmaster.MakeClerk(shardmasters)
 
+	kv.dblock = false
+
   // Your initialization code here.
   // Don't call Join().
   kv.lastOp = make(map[int64]LastOp)
@@ -454,10 +404,12 @@ func StartServer(gid int64, shardmasters []string,
 
   go func() {
     for kv.dead == false {
-      kv.tick()
+      //kv.tick()
+			kv.poll()
       time.Sleep(250 * time.Millisecond)
     }
   }()
 
   return kv
 }
+

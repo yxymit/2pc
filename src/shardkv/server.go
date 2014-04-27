@@ -155,10 +155,9 @@ func (kv *ShardKV) doCommit() {
 		decOp := e.Value
 		switch theop := decOp.(type) {
 		default:
-			log.Fatalf("Operation %T not supported by the database", theOp)
-			prepare_ok = false
+			//log.Fatalf("Operation %T not supported by the database", theOp)
 
-		case PutArgs:
+		case PutReply:
 			key := theop.Key
 			new_val := theop.Value
 			dohash := theop:DoHash

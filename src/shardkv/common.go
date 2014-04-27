@@ -12,6 +12,8 @@ import "container/list"
 // You will have to modify these definitions.
 //
 
+const NShards = 10
+
 const (
   OK = "OK"
   ErrNoKey = "ErrNoKey"
@@ -19,9 +21,15 @@ const (
   ErrPendReconfig = "ErrPendReconfig"
   ErrDupReq = "ErrDupReq"
   ErrStaleReq = "ErrStaleReq"
-	ErrNoLock = "ErrNoLock"
+  ErrNoLock = "ErrNoLock"
 )
 type Err string
+
+type TxnArgs struct {
+  Type string // Put, Get, Add
+  Key string
+  Value string
+}
 
 type PutArgs struct {
   Key string
@@ -48,6 +56,14 @@ type GetArgs struct {
 
 type GetReply struct {
   Err Err
+  Value string
+}
+
+type AddArgs struct {
+  Key string
+  Me int64
+  Rpcid int
+  
   Value string
 }
 
@@ -88,7 +104,7 @@ type InsOpArgs struct {
 }
 
 type InsOpReply struct {
-	Err Err
+  Err Err
 }
 
 type PrepArgs struct {
@@ -96,7 +112,7 @@ type PrepArgs struct {
 }
 
 type PrepReply struct {
-	Err Err
+  Err Err
 }
 
 type CommitArgs struct {
@@ -105,5 +121,5 @@ type CommitArgs struct {
 }
 
 type CommitReply struct {
-	Err Err
+  Err Err
 }

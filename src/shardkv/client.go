@@ -10,9 +10,8 @@ import "math/big"
 
 type Clerk struct {
   mu sync.Mutex // one RPC at a time
-  sm *shardmaster.Clerk
   config shardmaster.Config
-  // You'll have to modify Clerk.
+  groups map[int64][]string // gid -> servers[]
   me int64
   rpcid int
 }
@@ -24,10 +23,9 @@ func nrand() int64 {
   return x
 }
 
-func MakeClerk(shardmasters []string) *Clerk {
+func MakeClerk(groups map[int64][]string) *Clerk {
   ck := new(Clerk)
-  ck.sm = shardmaster.MakeClerk(shardmasters)
-  // You'll have to modify MakeClerk. 
+  ck.groups = groups
   ck.me = nrand() 
   ck.rpcid = 0
   return ck
@@ -78,6 +76,18 @@ func key2shard(key string) int {
   }
   shard %= shardmaster.NShards
   return shard
+}
+
+// statically map a shard to a group
+func shard2group(shard int) int {
+  return shard % 10;
+}
+
+func RunTxn(reqs []TxnArgs) {
+  type InsOpArgs struct {
+    txn_id int
+    txn list.List
+  }
 }
 
 //

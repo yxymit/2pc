@@ -37,12 +37,9 @@ type ReqReply struct {
   Value string
 }
 
-type LastOp struct {
-  Rpcid int
-  Op Op
-  // for return values
-  Err Err
-  Value string
+type LastReply struct {
+	Prepare_ok bool
+	Reply_list list.List
 }
 
 type CopyData struct {
@@ -69,6 +66,7 @@ type PrepArgs struct {
 
 type PrepReply struct {
   Err Err
+	Prepare_ok bool
   Replies list.List
 }
 

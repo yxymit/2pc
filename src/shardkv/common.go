@@ -38,8 +38,8 @@ type ReqReply struct {
 }
 
 type LastReply struct {
-	Prepare_ok bool
-	Reply_list list.List
+  Prepare_ok bool
+  Reply_list list.List
 }
 
 type CopyData struct {
@@ -66,7 +66,7 @@ type PrepArgs struct {
 
 type PrepReply struct {
   Err Err
-	Prepare_ok bool
+  Prepare_ok bool
   Replies list.List
 }
 

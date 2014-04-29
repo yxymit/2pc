@@ -42,9 +42,14 @@ func cleanup(sa [][]*ShardKV) {
   }
 }
 
-  db := make(map[string]string)
-func check(db map) {
-
+func check(db map[string]string, ck *Clerk) {
+  reqs = make([]ReqArgs, len(db))
+  for key, value := range db {
+    reqs[i].Type = "Get"
+    reqs[i].Key = strconv.Itoa(i)
+    reqs[i].Value = ""
+  }
+  ck.RunTxn(reqs)
 }
 
 func setup(tag string, unreliable bool) ([]string, []int64, [][]string, [][]*ShardKV, func()) {

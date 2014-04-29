@@ -38,8 +38,8 @@ func (ck *Clerk) shard2group(shard int) int64 {
 
 func (ck *Clerk) SendTxns(reqs []ReqArgs) {
   // Must lock the groups in a fixed order
-  for _, gid := range gids {
-    txn, ok := txns[gid]
+  for _, gid := range ck.gids {
+    txn, ok := ck.txns[gid]
     if ok {  // the gid is involved in this txn. send request
       locked := false
       for !locked {
@@ -58,7 +58,7 @@ func (ck *Clerk) SendTxns(reqs []ReqArgs) {
   }
 }
 
-func (ck *Clerk) RunTxn(reqs []ReqArgs) {
+func (ck *Clerk) RunTxn(reqs []ReqArgs) (bool, list.List) {
   
   var txns map[int64]*TxnArgs // [gid] -> *TxnArgs
   txnid := ck.txnid * 100 + ck.me
@@ -75,11 +75,12 @@ func (ck *Clerk) RunTxn(reqs []ReqArgs) {
   // send txn requests to all involved groups.
   SendTxns( reqs )
   
+  results := make(list.List)
   // All groups are locked.
   // Periodically send out Prepare requests.
   prepare_ready := false
   prepare_ok := true
-  for _, gid := range gids {
+  for _, gid := range ck.gids {
     txn, ok := txns[gid]
     if ok {
       args := PrepArgs{txnid, 0, ck.me}
@@ -93,6 +94,7 @@ func (ck *Clerk) RunTxn(reqs []ReqArgs) {
             if !reply.Prepare_ok {
               prepare_ok = false
             }
+            results.PushBackList(reply.Replies) 
             break
           }
         }
@@ -118,6 +120,6 @@ func (ck *Clerk) RunTxn(reqs []ReqArgs) {
       }
     }
   }
-
   ck.txnid ++
+  return prepare_ok, results
 }

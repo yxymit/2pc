@@ -116,12 +116,10 @@ func (kv *ShardKV) detectDup(op Op) bool {
     } else {
       return false
     }
+  }
 }
 
 
-// Execute the Ops until theop is executed or a reconfig is encountered.
-// return (Value/PreviousValue, OK) if theop is executed.
-// return ("", "Reconfig") if reconfig is encountered.
 func (kv *ShardKV) insertPaxos(theop Op) Err {
   for {
     if kv.dblock && txn_id != theop.Txn_id {
@@ -190,8 +188,8 @@ func (kv *ShardKV) doPrep(op Op) bool {
   return false
 }
 
-func (kv *ShardKV) doCommit() bool {
-  if kv.dblock && kv.txn_id == dop.Txn_id {
+func (kv *ShardKV) doCommit(op Op) bool {
+  if kv.dblock && kv.txn_id == op.Txn_id {
     
     reply_list := lastReply[op.Txn_id].Reply_list
     for e := reply_list.Front(); e != nil; e = e.Next() {

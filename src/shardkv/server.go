@@ -13,6 +13,7 @@ import "encoding/gob"
 import "math/rand"
 import "shardmaster"
 import "strconv"
+import "container/list"
 
 const Debug=0
 const CLR_0 = "\x1b[30;1m"
@@ -302,7 +303,7 @@ func (kv *ShardKV) Prepare_handler(args *PrepArgs, reply *PrepReply) err {
 
   opid := strconv.Itoa(time.Now().Nanosecond())
   
-  myop var Op
+  var myop Op
   
   if prepare_ok {
     myop = Op{OpCode: "Prep", Txn_id: args.Txn_id, Prepare_ok: prepare_ok, Reply_list: reply_list}

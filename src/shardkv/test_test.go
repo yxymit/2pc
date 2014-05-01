@@ -42,19 +42,29 @@ func cleanup(sa [][]*ShardKV) {
   }
 }
 
+func check(db map[string]string, ck *Clerk) {
+  reqs = make([]ReqArgs, len(db))
+  for key, value := range db {
+    reqs[i].Type = "Get"
+    reqs[i].Key = strconv.Itoa(i)
+    reqs[i].Value = ""
+  }
+  commit, results := ck.RunTxn(reqs)
+  if len(db) != results.Len() {
+    log.Fatal("results length is not correct")
+  }
+  for e := results.Front(); e != nil; e = e.Next() {
+    req_reply := e.Value.(ReqReply)
+    key := req_reply.Key
+    value := req_reply.Value
+    if value != db[key] {
+      log.Fatal("value does not match")
+    }
+  }
+}
+
 func setup(tag string, unreliable bool) ([]string, []int64, [][]string, [][]*ShardKV, func()) {
   runtime.GOMAXPROCS(4)
-  
-  const nmasters = 3
-  var sma []*shardmaster.ShardMaster = make([]*shardmaster.ShardMaster, nmasters)
-  var smh []string = make([]string, nmasters)
-  // defer mcleanup(sma)
-  for i := 0; i < nmasters; i++ {
-    smh[i] = port(tag+"m", i)
-  }
-  for i := 0; i < nmasters; i++ {
-    sma[i] = shardmaster.StartServer(smh, i)
-  }
 
   const ngroups = 3   // replica groups
   const nreplicas = 3 // servers per group
@@ -75,69 +85,44 @@ func setup(tag string, unreliable bool) ([]string, []int64, [][]string, [][]*Sha
     }
   }
 
-  clean := func() { cleanup(sa) ; mcleanup(sma) }
-  return smh, gids, ha, sa, clean
+  clean := func() { cleanup(sa) } // ; mcleanup(sma) }
+  return gids, ha, sa, clean
 }
 
-func TestBasic(t *testing.T) {
-  smh, gids, ha, _, clean := setup("basic", false)
+func TestTxnAbort(t *testing.T) {
+  gids, ha, _, clean := setup("basic", false)
   defer clean()
 
-  fmt.Printf("Test: Basic Join/Leave ...\n")
-
-  mck := shardmaster.MakeClerk(smh)
-  mck.Join(gids[0], ha[0])
-
-  ck := MakeClerk(smh)
-
-  ck.Put("a", "x")
-  v := ck.PutHash("a", "b")
-  if v != "x" {
-    t.Fatalf("Puthash got wrong value")
-  }
-  ov := NextValue("x", "b")
-  if ck.Get("a") != ov {
-    t.Fatalf("Get got wrong value")
-  }
-
-  keys := make([]string, 10)
-  vals := make([]string, len(keys))
-  for i := 0; i < len(keys); i++ {
-    keys[i] = strconv.Itoa(rand.Int())
-    vals[i] = strconv.Itoa(rand.Int())
-    ck.Put(keys[i], vals[i])
-  }
-
-  // are keys still there after joins?
-  for g := 1; g < len(gids); g++ {
-    mck.Join(gids[g], ha[g])
-    time.Sleep(1 * time.Second)
-    for i := 0; i < len(keys); i++ {
-      v := ck.Get(keys[i])
-      if v != vals[i] {
-        t.Fatalf("joining; wrong value; g=%v k=%v wanted=%v got=%v",
-          g, keys[i], vals[i], v)
-      }
-      vals[i] = strconv.Itoa(rand.Int())
-      ck.Put(keys[i], vals[i])
-    }
-  }
+  fmt.Printf("Test: Single Client. Abort should roll back.\n")
   
-  // are keys still there after leaves?
-  for g := 0; g < len(gids)-1; g++ {
-    mck.Leave(gids[g])
-    time.Sleep(1 * time.Second)
-    for i := 0; i < len(keys); i++ {
-      v := ck.Get(keys[i])
-      if v != vals[i] {
-        t.Fatalf("leaving; wrong value; g=%v k=%v wanted=%v got=%v",
-          g, keys[i], vals[i], v)
-      }
-      vals[i] = strconv.Itoa(rand.Int())
-      ck.Put(keys[i], vals[i])
-    }
+  db := make(map[string]string)
+  
+  groups := make(map[int64][]string)
+  for i, gid := range gids {
+    groups[gid] = ha[i]
   }
+  ck := MakeClerk(0, groups)
+   
+  // Txn 1
+  reqs = make([]ReqArgs, 10)
+  for i := 0; i < 10; i++ {
+    reqs[i].Type = "Put"
+    reqs[i].Key = strconv.Itoa(i)
+    reqs[i].Value = strconv.Itoa(1)
+    db[ reqs[i].Key ] = reqs[i].Value
+  }
+  ck.RunTxn(reqs)
 
+  // check results
+  check(db, ck) 
+   
+  reqs = make([]ReqArgs, 3)
+  reqs[0] = ReqArgs{"Put", "1", "2"}
+  reqs[1] = ReqArgs{"Add", "2", "-2"}
+  reqs[2] = ReqArgs{"Put", "3", "2"}
+  ck.RunTxn(reqs)
+
+  check(db, ck)
   fmt.Printf("  ... Passed\n")
 }
 

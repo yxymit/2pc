@@ -1,10 +1,10 @@
 package shardkv
 
 import "shardmaster"
-import "net/rpc"
-import "time"
+//import "time"
+import "container/list"
 import "sync"
-import "fmt"
+//import "fmt"
 
 type Clerk struct {
   mu sync.Mutex // one RPC at a time
@@ -19,7 +19,7 @@ type Clerk struct {
 func MakeClerk(me int, groups map[int64][]string) *Clerk {
   ck := new(Clerk)
   ck.groups = groups
-  ck.gids := make([]int64, len(groups))
+  ck.gids = make([]int64, len(groups))
   i := 0
   for k, _ := range groups {
     gids[i] = k

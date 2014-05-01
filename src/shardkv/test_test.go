@@ -1,14 +1,14 @@
 package shardkv
 
 import "testing"
-import "shardmaster"
 import "runtime"
 import "strconv"
 import "os"
-import "time"
+//import "time"
 import "fmt"
-import "sync"
-import "math/rand"
+import "log"
+//import "sync"
+//import "math/rand"
 
 func port(tag string, host int) string {
   s := "/var/tmp/824-"
@@ -21,11 +21,7 @@ func port(tag string, host int) string {
   return s
 }
 
-func NextValue(hprev string, val string) string {
-  h := hash(hprev + val)
-  return strconv.Itoa(int(h))
-}
-
+/*
 func mcleanup(sma []*shardmaster.ShardMaster) {
   for i := 0; i < len(sma); i++ {
     if sma[i] != nil {
@@ -33,6 +29,7 @@ func mcleanup(sma []*shardmaster.ShardMaster) {
     }
   }
 }
+*/
 
 func cleanup(sa [][]*ShardKV) {
   for i := 0; i < len(sa); i++ {
@@ -43,13 +40,18 @@ func cleanup(sa [][]*ShardKV) {
 }
 
 func check(db map[string]string, ck *Clerk) {
-  reqs = make([]ReqArgs, len(db))
-  for key, value := range db {
+  reqs := make([]ReqArgs, len(db))
+  i := 0
+  for key, _ := range db {
     reqs[i].Type = "Get"
-    reqs[i].Key = strconv.Itoa(i)
+    reqs[i].Key = key
     reqs[i].Value = ""
+    i ++
   }
   commit, results := ck.RunTxn(reqs)
+  if !commit {
+    log.Fatal("Read only txns not committed.")
+  }
   if len(db) != results.Len() {
     log.Fatal("results length is not correct")
   }
@@ -63,7 +65,7 @@ func check(db map[string]string, ck *Clerk) {
   }
 }
 
-func setup(tag string, unreliable bool) ([]string, []int64, [][]string, [][]*ShardKV, func()) {
+func setup(tag string, unreliable bool) ([]int64, [][]string, [][]*ShardKV, func()) {
   runtime.GOMAXPROCS(4)
 
   const ngroups = 3   // replica groups
@@ -80,7 +82,7 @@ func setup(tag string, unreliable bool) ([]string, []int64, [][]string, [][]*Sha
       ha[i][j] = port(tag+"s", (i*nreplicas)+j)
     }
     for j := 0; j < nreplicas; j++ {
-      sa[i][j] = StartServer(gids[i], smh, ha[i], j)
+      sa[i][j] = StartServer(gids[i], ha[i], j)
       sa[i][j].unreliable = unreliable
     }
   }
@@ -104,14 +106,17 @@ func TestTxnAbort(t *testing.T) {
   ck := MakeClerk(0, groups)
    
   // Txn 1
-  reqs = make([]ReqArgs, 10)
+  reqs := make([]ReqArgs, 10)
   for i := 0; i < 10; i++ {
     reqs[i].Type = "Put"
     reqs[i].Key = strconv.Itoa(i)
     reqs[i].Value = strconv.Itoa(1)
     db[ reqs[i].Key ] = reqs[i].Value
   }
-  ck.RunTxn(reqs)
+  commit, _ := ck.RunTxn(reqs)
+  if commit {
+    log.Fatal("Should not commit")
+  }
 
   // check results
   check(db, ck) 
@@ -126,186 +131,3 @@ func TestTxnAbort(t *testing.T) {
   fmt.Printf("  ... Passed\n")
 }
 
-func TestMove(t *testing.T) {
-  smh, gids, ha, _, clean := setup("move", false)
-  defer clean()
-
-  fmt.Printf("Test: Shards really move ...\n")
-
-  mck := shardmaster.MakeClerk(smh)
-  mck.Join(gids[0], ha[0])
-
-  ck := MakeClerk(smh)
-
-  // insert one key per shard
-  for i := 0; i < shardmaster.NShards; i++ {
-    ck.Put(string('0'+i), string('0'+i))
-  }
-
-  // add group 1.
-  mck.Join(gids[1], ha[1])
-  time.Sleep(5 * time.Second)
-  
-  // check that keys are still there.
-  for i := 0; i < shardmaster.NShards; i++ {
-    if ck.Get(string('0'+i)) != string('0'+i) {
-      t.Fatalf("missing key/value")
-    }
-  }
-
-  // remove sockets from group 0.
-  for i := 0; i < len(ha[0]); i++ {
-    os.Remove(ha[0][i])
-  }
-
-  count := 0
-  var mu sync.Mutex
-  for i := 0; i < shardmaster.NShards; i++ {
-    go func(me int) {
-      myck := MakeClerk(smh)
-      v := myck.Get(string('0'+me))
-      if v == string('0'+me) {
-        mu.Lock()
-        count++
-        mu.Unlock()
-      } else {
-        t.Fatalf("Get(%v) yielded %v\n", i, v)
-      }
-    }(i)
-  }
-
-  time.Sleep(10 * time.Second)
-
-  if count > shardmaster.NShards / 3 && count < 2*(shardmaster.NShards/3) {
-    fmt.Printf("  ... Passed\n")
-  } else {
-    t.Fatalf("%v keys worked after killing 1/2 of groups; wanted %v",
-      count, shardmaster.NShards / 2)
-  }
-}
-
-func TestLimp(t *testing.T) {
-  smh, gids, ha, sa, clean := setup("limp", false)
-  defer clean()
-
-  fmt.Printf("Test: Reconfiguration with some dead replicas ...\n")
-
-  mck := shardmaster.MakeClerk(smh)
-  mck.Join(gids[0], ha[0])
-
-  ck := MakeClerk(smh)
-
-  ck.Put("a", "b")
-  if ck.Get("a") != "b" {
-    t.Fatalf("got wrong value")
-  }
-
-  for g := 0; g < len(sa); g++ {
-    sa[g][rand.Int() % len(sa[g])].kill()
-  }
-
-  keys := make([]string, 10)
-  vals := make([]string, len(keys))
-  for i := 0; i < len(keys); i++ {
-    keys[i] = strconv.Itoa(rand.Int())
-    vals[i] = strconv.Itoa(rand.Int())
-    ck.Put(keys[i], vals[i])
-  }
-
-  // are keys still there after joins?
-  for g := 1; g < len(gids); g++ {
-    mck.Join(gids[g], ha[g])
-    time.Sleep(1 * time.Second)
-    for i := 0; i < len(keys); i++ {
-      v := ck.Get(keys[i])
-      if v != vals[i] {
-        t.Fatalf("joining; wrong value; g=%v k=%v wanted=%v got=%v",
-          g, keys[i], vals[i], v)
-      }
-      vals[i] = strconv.Itoa(rand.Int())
-      ck.Put(keys[i], vals[i])
-    }
-  }
-  
-  // are keys still there after leaves?
-  for g := 0; g < len(gids)-1; g++ {
-    mck.Leave(gids[g])
-    time.Sleep(2 * time.Second)
-    for i := 0; i < len(sa[g]); i++ {
-      sa[g][i].kill()
-    }
-    for i := 0; i < len(keys); i++ {
-      v := ck.Get(keys[i])
-      if v != vals[i] {
-        t.Fatalf("leaving; wrong value; g=%v k=%v wanted=%v got=%v",
-          g, keys[i], vals[i], v)
-      }
-      vals[i] = strconv.Itoa(rand.Int())
-      ck.Put(keys[i], vals[i])
-    }
-  }
-
-  fmt.Printf("  ... Passed\n")
-}
-
-func doConcurrent(t *testing.T, unreliable bool) {
-  smh, gids, ha, _, clean := setup("conc"+strconv.FormatBool(unreliable), unreliable)
-  defer clean()
-
-  mck := shardmaster.MakeClerk(smh)
-  for i := 0; i < len(gids); i++ {
-    mck.Join(gids[i], ha[i])
-  }
-
-  const npara = 11
-  var ca [npara]chan bool
-  for i := 0; i < npara; i++ {
-    ca[i] = make(chan bool)
-    go func(me int) {
-      ok := true
-      defer func() { ca[me] <- ok }()
-      ck := MakeClerk(smh)
-      mymck := shardmaster.MakeClerk(smh)
-      key := strconv.Itoa(me)
-      last := ""
-      for iters := 0; iters < 3; iters++ {
-        nv := strconv.Itoa(rand.Int())
-        v := ck.PutHash(key, nv)
-        if v != last {
-          ok = false
-          t.Fatalf("PutHash(%v) expected %v got %v\n", key, last, v)
-        }
-        last = NextValue(last, nv)
-        v = ck.Get(key)
-        if v != last {
-          ok = false
-          t.Fatalf("Get(%v) expected %v got %v\n", key, last, v)
-        }
-
-        mymck.Move(rand.Int() % shardmaster.NShards,
-          gids[rand.Int() % len(gids)])
-
-        time.Sleep(time.Duration(rand.Int() % 30) * time.Millisecond)
-      }
-    }(i)
-  }
-
-  for i := 0; i < npara; i++ {
-    x := <- ca[i]
-    if x == false {
-      t.Fatalf("something is wrong")
-    }
-  }
-}
-
-func TestConcurrent(t *testing.T) {
-  fmt.Printf("Test: Concurrent Put/Get/Move ...\n")
-  doConcurrent(t, false)
-  fmt.Printf("  ... Passed\n")
-}
-
-func TestConcurrentUnreliable(t *testing.T) {
-  fmt.Printf("Test: Concurrent Put/Get/Move (unreliable) ...\n")
-  doConcurrent(t, true)
-  fmt.Printf("  ... Passed\n")
-}

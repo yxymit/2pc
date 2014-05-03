@@ -23,6 +23,10 @@ const (
   ErrDupReq = "ErrDupReq"
   ErrStaleReq = "ErrStaleReq"
   ErrNoLock = "ErrNoLock"
+
+  Lock = "Lock"
+  Prep = "Prepare"
+  Commit = "Commit"
 )
 type Err string
 

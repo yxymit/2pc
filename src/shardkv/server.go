@@ -45,28 +45,16 @@ func DPrintf(format string, a ...interface{}) (n int, err error) {
 type Op struct {
   // Your definitions here.
   
-  Type string // 'Lock', 'Prep', 'Commit'
+  Type string 
   Txn []ReqArgs
-//  Txn *list.List
   Txn_id int
-  Op_id string
-
+  
   // for Type == prep
   Prepare_ok bool
   Reply_list []ReqReply
-//  Reply_list *list.List
   
   // for Type == commit
   Commit bool
-
-/*
-  // for Type == "Reconfig" only
-  Preconfig shardmaster.Config
-  Afterconfig shardmaster.Config
-
-  Db map[int]map[string]string
-  LastOp map[int64]LastOp
-*/
 }
 
 type ShardKV struct {
@@ -96,51 +84,54 @@ type ShardKV struct {
   lastReply map[int]LastReply // db[txn_id] -> Replies
 }
 
-func (kv *ShardKV) detectDup(op Op) bool {
+func (kv *ShardKV) detectDup(op Op) (bool, interface{}) {
   _, ok := kv.txn_phase[op.Txn_id]
 
   if !ok {
-    return false
+    if op.Type != "Lock" {
+      log.Fatal("Not exist in txn_phase")
+    }
+    return false, nil
   }
 
   switch op.Type {
   case "Lock":
-    return true
+    return true, TxnReply{"OK"}
   case "Prep":
-    if kv.txn_phase[op.Txn_id] == "Prepared" || kv.txn_phase[op.Txn_id] == "Commited" {
-      return true
+    if kv.txn_phase[op.Txn_id] == "Prepared" {
+      return true, PrepReply{"OK", kv.lastReply[op.Txn_id].Prepare_ok, kv.lastReply[op.Txn_id].Reply_list}
+    } else if kv.txn_phase[op.Txn_id] == "Commited" {
+      return true, PrepReply{Err:"OK"}
     } else {
-      return false
+      return false, nil
     }
-  case "Commited":
+  case "Commit":
     if kv.txn_phase[op.Txn_id] == "Comitted" {
-      return true
+      return true, CommitReply{"OK"}
     } else {
-      return false
+      return false, nil
     }
   default :
-    log.Fatal("Unsupportted Operation Type")
+    log.Fatal("Unsuportted Operation Type")
   }
-  return false
+  return false, nil
 }
 
 
-func (kv *ShardKV) insertPaxos(theop Op) Err {
+func (kv *ShardKV) exeOp(theop Op) Err {
   for {
-    if kv.dblock && kv.txn_id != theop.Txn_id {
-      return ErrNoLock
+    if theop.Type == "Prep" && kv.txn_id == theop.Txn_id && kv.dblock {
+      theop = kv.getPrepOp()
     }
-
-    if kv.detectDup(theop) {
-      return OK
-    }
-
     kv.px.Start(kv.exeseq, theop)
     to := 10 * time.Millisecond
+    decided := false
+    var decop interface{}
+    var do_op Op
     for {
-      decided, decop := kv.px.Status(kv.exeseq)
+      decided, decop = kv.px.Status(kv.exeseq)
       if decided {
-        do_op := decop.(Op)
+        do_op = decop.(Op)
         kv.exeseq++
         
         switch do_op.Type {
@@ -151,11 +142,9 @@ func (kv *ShardKV) insertPaxos(theop Op) Err {
         case "Commit":
           kv.doCommit(do_op)
         default:
+          log.Fatal("Unsuported op type")
         }
-
-        if do_op.Op_id == theop.Op_id {
-          return OK
-        } 
+        break
       } else {
         time.Sleep(to)
         if to < time.Second {
@@ -163,43 +152,42 @@ func (kv *ShardKV) insertPaxos(theop Op) Err {
         } 
       }
     }
-
+    if theop.Type == "Lock" && do_op.Txn_id != theop.Txn_id {
+      return ErrNoLock
+    } else if do_op.Txn_id == theop.Txn_id && do_op.Type == theop.Type {
+      return OK
+    }
   }
 }
 
-func (kv *ShardKV) doLock(op Op) bool {
-  if kv.dblock && kv.txn_id == op.Txn_id {
-    kv.dblock = true
-    kv.txn_id = op.Txn_id
-    kv.curr_txn = op.Txn
-    
-    kv.txn_phase[op.Txn_id] = "Locked"
-
-    return true
+func (kv *ShardKV) doLock(op Op) {   
+  if kv.dblock {
+    log.Fatal("[doLock] Shit! Already locked")
   }
+  kv.dblock = true
+  kv.txn_id = op.Txn_id
+  kv.curr_txn = op.Txn
+  kv.txn_phase[op.Txn_id] = "Locked"
+}
 
-  return false
+func (kv *ShardKV) doPrep(op Op) {  
+  if !kv.dblock || kv.txn_id != op.Txn_id {
+    log.Fatal("[doPrep] Shit! Not locked by me")
+  }
+  kv.txn_phase[op.Txn_id] = "Prepared"
+  kv.lastReply[op.Txn_id] = LastReply{Prepare_ok: op.Prepare_ok, Reply_list: op.Reply_list}
+}
+
+func (kv *ShardKV) doCommit(op Op) {
+  if !kv.dblock || kv.txn_id != op.Txn_id {
+    log.Fatal("[doPrep] Shit! Not locked by me")
+  }
   
-}
-
-func (kv *ShardKV) doPrep(op Op) bool {  
-  if kv.dblock && kv.txn_id == op.Txn_id {
-
-    kv.txn_phase[op.Txn_id] = "Prepared"
-    kv.lastReply[op.Txn_id] = LastReply{Prepare_ok: op.Prepare_ok, Reply_list: op.Reply_list}
-    return true
-  }
-  
-  return false
-}
-
-func (kv *ShardKV) doCommit(op Op) bool {
-  if kv.dblock && kv.txn_id == op.Txn_id {
-    
+  if !op.Commit {
+    return
+  } else {
     reply_list := kv.lastReply[op.Txn_id].Reply_list
     for _, theop := range reply_list {
-//    for e := reply_list.Front(); e != nil; e = e.Next() {
-//      theop := e.Value.(ReqReply)
       switch theop.Type {
       default:
         log.Fatalf("Operation %T not supported by the database", theop)
@@ -221,11 +209,7 @@ func (kv *ShardKV) doCommit(op Op) bool {
     // TODO:: db has to be written into resistent storage
     kv.txn_phase[op.Txn_id] = "Commited"
     kv.dblock = false
-    
-    return true
   }
-  
-  return false
 }
 
 
@@ -233,27 +217,29 @@ func (kv *ShardKV) Insert_txn(args *TxnArgs, reply *TxnReply) error {
   kv.mu.Lock()
   defer kv.mu.Unlock()
 
-  opid := strconv.Itoa(time.Now().Nanosecond())
+  myop := Op{Type: "Lock", Txn: args.Txn, Txn_id: args.Txn_id}
+  
+  dup, val := kv.detectDup(myop)
+  if dup {
+    reply.Err = val.(TxnReply).Err
+    return nil
+  }
+  if kv.dblock && kv.txn_id != args.Txn_id {
+    reply.Err = ErrNoLock
+    return nil
+  }
 
-  myop := Op{Type: "Lock", Txn: args.Txn, Txn_id: args.Txn_id, Op_id: opid}
-
-  reply.Err = kv.insertPaxos(myop)
+  reply.Err = kv.exeOp(myop)
 
   return nil
   
 }
 
-
-func (kv *ShardKV) Prepare_handler(args *PrepArgs, reply *PrepReply) error {
-  kv.mu.Lock()
-  defer kv.mu.Unlock()
-
+func (kv *ShardKV) getPrepOp() Op {
   prepare_ok := true
+  reply_list := make([]ReqReply, 0)
 
-  reply_list := make([]ReqReply, 0)//list.New()
   for _, theop := range kv.curr_txn {
-//  for e := kv.curr_txn.Front(); e != nil; e = e.Next() {
-//    theop := e.Value.(ReqArgs)
     key := theop.Key
     new_val := theop.Value
     shard_id := key2shard(key)
@@ -265,18 +251,15 @@ func (kv *ShardKV) Prepare_handler(args *PrepArgs, reply *PrepReply) error {
 
     case "Put":
       
-      _, err0 := strconv.Atoi(curr_val)
-      _, err1 := strconv.Atoi(new_val)
-      if err0 != nil || err1 != nil {
+      _, err := strconv.Atoi(new_val)
+      if err != nil {
         log.Fatalf("Values are not integers\n")
       }
       reply_list = append(reply_list, ReqReply{"Put", key, new_val})
-//      reply_list.PushBack(ReqReply{Type:"Put", Key: key, Value: new_val})
       
     case "Get":
       
       reply_list = append(reply_list, ReqReply{"Get", key, new_val})
-//      reply_list.PushBack(ReqReply{Type:"Get", Key: theop.Key, Value: curr_val})
       
     case "Add":
       
@@ -294,40 +277,52 @@ func (kv *ShardKV) Prepare_handler(args *PrepArgs, reply *PrepReply) error {
         break
       } else {
         reply_list = append(reply_list, ReqReply{"Add", key, strconv.Itoa(z)})
-//        reply_list.PushBack(ReqReply{Type:"Add", Key: key, Value: strconv.Itoa(z)})
       }    
-      
     }  
   }
-
-  opid := strconv.Itoa(time.Now().Nanosecond())
-  
   var myop Op
-  
   if prepare_ok {
-    myop = Op{Type: "Prep", Txn_id: args.Txn_id, Prepare_ok: prepare_ok, Reply_list: reply_list, Op_id: opid}
+    myop = Op{Type: "Prep", Txn_id: kv.txn_id, Prepare_ok: prepare_ok, Reply_list: reply_list}
   } else {
-    myop = Op{Type: "Prep", Txn_id: args.Txn_id, Prepare_ok: prepare_ok, Op_id: opid}
+    myop = Op{Type: "Prep", Txn_id: kv.txn_id, Prepare_ok: prepare_ok}
+  }
+  return myop
+}
+
+func (kv *ShardKV) Prepare_handler(args *PrepArgs, reply *PrepReply) error {
+  kv.mu.Lock()
+  defer kv.mu.Unlock()
+ 
+  myop := Op{Type:"Prep", Txn_id:args.Txn_id}
+  dup, val := kv.detectDup(myop)
+  if dup {
+    reply.Err = val.(PrepReply).Err
+    reply.Prepare_ok = val.(PrepReply).Prepare_ok
+    reply.Replies = val.(PrepReply).Replies
+    return nil
   }
 
-  reply.Err = kv.insertPaxos(myop)
+  reply.Err = kv.exeOp(myop)
 
   reply.Prepare_ok = kv.lastReply[args.Txn_id].Prepare_ok
   reply.Replies = kv.lastReply[args.Txn_id].Reply_list
 
   return nil
-
 }
 
 func (kv *ShardKV) Commit_handler(args *CommitArgs, reply *CommitReply) error {
   kv.mu.Lock()
   defer kv.mu.Unlock()
-
-  opid := strconv.Itoa(time.Now().Nanosecond())
-
-  myop := Op{Type: "Commit", Txn_id: args.Txn_id, Commit: args.Commit, Op_id: opid}
-
-  reply.Err = kv.insertPaxos(myop)
+  
+  myop := Op{Type: "Commit", Txn_id: args.Txn_id, Commit: args.Commit}
+  
+  dup, val := kv.detectDup(myop)
+  if dup {
+    reply.Err = val.(CommitReply).Err
+    return nil
+  }
+  
+  reply.Err = kv.exeOp(myop)
 
   return nil
 
@@ -390,6 +385,12 @@ func StartServer(gid int64, servers []string, me int) *ShardKV {
   for i := 0; i < shardmaster.NShards; i++ {
     kv.db[i] = make(map[string]string)
   }
+//  curr_txn []ReqArgs
+
+  kv.txn_phase = make(map[int]string)
+  kv.lastReply = make(map[int]LastReply)
+
+
 
   rpcs := rpc.NewServer()
   rpcs.Register(kv)

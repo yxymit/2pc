@@ -146,13 +146,14 @@ func TestTxnConcurrent(t *testing.T) {
   
 	Ncli := 3
 	
-	var ck [NCli]*Clerk
-	for i: = 0; i < Ncli; i++ {
-		ck[i] := MakeClerk(i, groups);
+	ck := make([]*Clerk, Ncli)
+	for i := 0; i < Ncli; i++ {
+		ck[i] = MakeClerk(i, groups);
 	}
   
   // Txn 1
   reqs := make([]ReqArgs, 10)
+
   for i := 0; i < 10; i++ {
     reqs[i].Type = "Put"
     reqs[i].Key = strconv.Itoa(i)
@@ -194,7 +195,7 @@ func TestTxnConcurrent(t *testing.T) {
 		for cli := 0; cli < Ncli; cli++ {
 			ca[cli] = make(chan bool)
 			go func(me int) {
-				defer func() {ca[me] <- true}
+				defer func() {ca[me] <- true}()
 				ok, txnReply := ck[i].RunTxn(reqs)
 				if ok {
 					for i := 0; i < 9; i++ {

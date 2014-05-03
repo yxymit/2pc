@@ -4,8 +4,6 @@ package shardkv
 import "net/rpc"
 import "fmt"
 
-import "container/list"
-
 //
 // Sharded key/value server.
 // Lots of replica groups, each running op-at-a-time paxos.
@@ -42,14 +40,14 @@ type ReqReply struct {
 
 type LastReply struct {
   Prepare_ok bool
-  Reply_list *list.List
+  Reply_list []ReqReply //*list.List
 }
 
 type TxnArgs struct {
   Txn_id int
   Rpcid int
   Me int
-  Txn *list.List
+  Txn []ReqArgs //*list.List
 }
 
 type TxnReply struct {
@@ -65,7 +63,7 @@ type PrepArgs struct {
 type PrepReply struct {
   Err Err
   Prepare_ok bool
-  Replies *list.List
+  Replies []ReqReply //*list.List
 }
 
 type CommitArgs struct {

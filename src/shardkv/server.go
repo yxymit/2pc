@@ -13,9 +13,8 @@ import "encoding/gob"
 import "math/rand"
 import "shardmaster"
 import "strconv"
-import "container/list"
 
-const Debug=0
+const Debug=1
 const CLR_0 = "\x1b[30;1m"
 const CLR_R = "\x1b[31;1m"
 const CLR_G = "\x1b[32;1m"
@@ -47,13 +46,15 @@ type Op struct {
   // Your definitions here.
   
   Type string // 'Lock', 'Prep', 'Commit'
-  Txn *list.List
+  Txn []ReqArgs
+//  Txn *list.List
   Txn_id int
   Op_id string
 
   // for Type == prep
   Prepare_ok bool
-  Reply_list *list.List
+  Reply_list []ReqReply
+//  Reply_list *list.List
   
   // for Type == commit
   Commit bool
@@ -87,7 +88,8 @@ type ShardKV struct {
   // Transcation database here.
   dblock bool
   txn_id int
-  curr_txn *list.List
+  curr_txn []ReqArgs
+//  curr_txn *list.List
   //reply_list list.List
 
   txn_phase map[int]string // db[txn_id] -> "Locked"/"Prepared"/"Commited"
@@ -195,8 +197,9 @@ func (kv *ShardKV) doCommit(op Op) bool {
   if kv.dblock && kv.txn_id == op.Txn_id {
     
     reply_list := kv.lastReply[op.Txn_id].Reply_list
-    for e := reply_list.Front(); e != nil; e = e.Next() {
-      theop := e.Value.(ReqReply)
+    for _, theop := range reply_list {
+//    for e := reply_list.Front(); e != nil; e = e.Next() {
+//      theop := e.Value.(ReqReply)
       switch theop.Type {
       default:
         log.Fatalf("Operation %T not supported by the database", theop)
@@ -247,10 +250,10 @@ func (kv *ShardKV) Prepare_handler(args *PrepArgs, reply *PrepReply) error {
 
   prepare_ok := true
 
-  reply_list := list.New()
-
-  for e := kv.curr_txn.Front(); e != nil; e = e.Next() {
-    theop := e.Value.(ReqArgs)
+  reply_list := make([]ReqReply, 0)//list.New()
+  for _, theop := range kv.curr_txn {
+//  for e := kv.curr_txn.Front(); e != nil; e = e.Next() {
+//    theop := e.Value.(ReqArgs)
     key := theop.Key
     new_val := theop.Value
     shard_id := key2shard(key)
@@ -267,12 +270,13 @@ func (kv *ShardKV) Prepare_handler(args *PrepArgs, reply *PrepReply) error {
       if err0 != nil || err1 != nil {
         log.Fatalf("Values are not integers\n")
       }
-
-      reply_list.PushBack(ReqReply{Type:"Put", Key: key, Value: new_val})
+      reply_list = append(reply_list, ReqReply{"Put", key, new_val})
+//      reply_list.PushBack(ReqReply{Type:"Put", Key: key, Value: new_val})
       
     case "Get":
       
-      reply_list.PushBack(ReqReply{Type:"Get", Key: theop.Key, Value: curr_val})
+      reply_list = append(reply_list, ReqReply{"Get", key, new_val})
+//      reply_list.PushBack(ReqReply{Type:"Get", Key: theop.Key, Value: curr_val})
       
     case "Add":
       
@@ -289,7 +293,8 @@ func (kv *ShardKV) Prepare_handler(args *PrepArgs, reply *PrepReply) error {
         prepare_ok = false
         break
       } else {
-        reply_list.PushBack(ReqReply{Type:"Add", Key: key, Value: strconv.Itoa(z)})
+        reply_list = append(reply_list, ReqReply{"Add", key, strconv.Itoa(z)})
+//        reply_list.PushBack(ReqReply{Type:"Add", Key: key, Value: strconv.Itoa(z)})
       }    
       
     }  
@@ -369,6 +374,8 @@ func (kv *ShardKV) kill() {
 //
 func StartServer(gid int64, servers []string, me int) *ShardKV {
   gob.Register(Op{}) 
+  gob.Register(ReqArgs{}) 
+  gob.Register(TxnArgs{}) 
   gob.Register(make(map[int]map[string]string))
     
   kv := new(ShardKV)

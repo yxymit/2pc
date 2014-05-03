@@ -52,11 +52,10 @@ func check(db map[string]string, ck *Clerk) {
   if !commit {
     log.Fatal("Read only txns not committed.")
   }
-  if len(db) != results.Len() {
+  if len(db) != len(results) {
     log.Fatal("results length is not correct")
   }
-  for e := results.Front(); e != nil; e = e.Next() {
-    req_reply := e.Value.(ReqReply)
+  for _, req_reply := range results {
     key := req_reply.Key
     value := req_reply.Value
     if value != db[key] {
@@ -113,7 +112,8 @@ func TestTxnAbort(t *testing.T) {
     reqs[i].Value = strconv.Itoa(1)
     db[ reqs[i].Key ] = reqs[i].Value
   }
-  commit, _ := ck.RunTxn(reqs)
+  commit, value := ck.RunTxn(reqs)
+  fmt.Printf("commit=%v\nvalue=%+v\n", commit, value)
   if commit {
     log.Fatal("Should not commit")
   }

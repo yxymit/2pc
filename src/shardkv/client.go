@@ -2,9 +2,7 @@ package shardkv
 
 import "shardmaster"
 //import "time"
-import "container/list"
 import "sync"
-import "fmt"
 
 type Clerk struct {
   mu sync.Mutex // one RPC at a time
@@ -36,7 +34,7 @@ func (ck *Clerk) shard2group(shard int) int64 {
   return ck.gids[ shard % len(ck.gids) ]
 }
 
-func (ck *Clerk) RunTxn(reqs []ReqArgs) (bool, *list.List) {
+func (ck *Clerk) RunTxn(reqs []ReqArgs) (bool, []ReqReply) {
   //
   // partition the requests based on groups
 //  var txns map[int64]*TxnArgs // [gid] -> *TxnArgs
@@ -47,12 +45,12 @@ func (ck *Clerk) RunTxn(reqs []ReqArgs) (bool, *list.List) {
     _, ok := txns[gid]
     if !ok {
       txns[gid] = new(TxnArgs)
-      txns[gid].Txn = new(list.List)
       txns[gid].Txn_id = txnid
     } 
-    txns[gid].Txn.PushBack(req)
+    txns[gid].Txn = append(txns[gid].Txn, req)
   }
   
+  DPrintfCLR(1, "Ready to send out Lock requests")
   //
   // send the requests belong to a group to that group 
   // Must lock the groups in a fixed order
@@ -64,7 +62,6 @@ func (ck *Clerk) RunTxn(reqs []ReqArgs) (bool, *list.List) {
         for _, srv := range ck.groups[gid] {
           var reply TxnReply 
           ok := call(srv, "ShardKV.Insert_txn", txn, &reply)
-  fmt.Printf("sagrgraegr%+v\n%+v\nok=%+v\n", srv, txn, ok) 
           if ok && (reply.Err == OK) {
             // the current group is successfully locked. 
             // Proceed to the next group
@@ -75,7 +72,8 @@ func (ck *Clerk) RunTxn(reqs []ReqArgs) (bool, *list.List) {
       }
     }
   }
-  results :=new(list.List)
+  DPrintfCLR(1, "All groups are locked. Ready to send Prepare requests")
+  results := make([]ReqReply, 0)
   //
   // All groups are locked.
   // Periodically send out Prepare requests.
@@ -90,11 +88,12 @@ func (ck *Clerk) RunTxn(reqs []ReqArgs) (bool, *list.List) {
         for _, srv := range ck.groups[gid] {
           ok := call(srv, "ShardKV.Prepare_handler", &args, &reply)
           if ok && reply.Err == OK {
+            DPrintfCLR(2, "gid=%d. prepare_ok=%v", gid, reply.Prepare_ok)
             group_prepare_ready = true
             if !reply.Prepare_ok {
               prepare_ok = false
             }
-            results.PushBackList(reply.Replies) 
+            results = append(results, reply.Replies...) 
             break
           }
         }
@@ -102,6 +101,7 @@ func (ck *Clerk) RunTxn(reqs []ReqArgs) (bool, *list.List) {
     }
   }
 
+  DPrintfCLR(1, "Prepares returned. prepare_ok=%v", prepare_ok)
   // All Prepare results are back. send out the second phase commit/abort message.
   for _, gid := range ck.gids {
     _, ok := txns[gid]

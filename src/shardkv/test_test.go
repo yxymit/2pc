@@ -59,6 +59,7 @@ func check(db map[string]string, ck *Clerk) {
     key := req_reply.Key
     value := req_reply.Value
     if value != db[key] {
+			fmt.Printf("db = %+v\n reply = %+v\n", db, results)
       log.Fatal("value does not match")
     }
   }
@@ -114,9 +115,7 @@ func TestTxnAbort(t *testing.T) {
   }
   commit, value := ck.RunTxn(reqs)
   fmt.Printf("commit=%v\nvalue=%+v\n", commit, value)
-  if commit {
-    log.Fatal("Should not commit")
-  }
+  
 
   // check results
   check(db, ck) 
@@ -127,10 +126,14 @@ func TestTxnAbort(t *testing.T) {
   reqs[2] = ReqArgs{"Put", "3", "2"}
   ck.RunTxn(reqs)
 
+	if commit {
+    log.Fatal("Should not commit")
+  }
+
   check(db, ck)
   fmt.Printf("  ... Passed\n")
 }
-/*
+
 func TestTxnConcurrent(t *testing.T) {
   gids, ha, _, clean := setup("basic", false)
   defer clean()
@@ -189,22 +192,24 @@ func TestTxnConcurrent(t *testing.T) {
 		valueTouched[i] = false
 	}
 	
-	var ca [Ncli]chan bool
+	ca := make([]chan bool, Ncli)
 	
-	for iter := 0; iter < 10; i++ {
+	for iter := 0; iter < 10; iter++ {
 		for cli := 0; cli < Ncli; cli++ {
 			ca[cli] = make(chan bool)
 			go func(me int) {
 				defer func() {ca[me] <- true}()
-				ok, txnReply := ck[i].RunTxn(reqs)
+				ok, txnReply := ck[me].RunTxn(reqs)
 				if ok {
 					for i := 0; i < 9; i++ {
 						if txnReply[i].Value != txnReply[i+1].Value {
 							log.Fatalf("Error: add fails, values are not same\n")
 						}
 					}
-					if !valueTouched[strconv.Atoi(txnReply[i].Value)] {
-						valueTouched[strconv.Atoi(txnReply[i].Value)] = true
+					
+					ind, _ := strconv.Atoi(txnReply[0].Value)
+					if !valueTouched[ind] {
+						valueTouched[ind] = true
 					} else {
 						log.Fatalf("Error: add fails, this value has already been added\n")
 					}
@@ -223,4 +228,4 @@ func TestTxnConcurrent(t *testing.T) {
 
   fmt.Printf("  ... Passed\n")
 }
-*/
+

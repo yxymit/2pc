@@ -88,25 +88,25 @@ func (kv *ShardKV) detectDup(op Op) (bool, interface{}) {
   _, ok := kv.txn_phase[op.Txn_id]
 
   if !ok {
-    if op.Type != "Lock" {
+    if op.Type != Lock {
       log.Fatal("Not exist in txn_phase")
     }
     return false, nil
   }
 
   switch op.Type {
-  case "Lock":
+  case Lock:
     return true, TxnReply{"OK"}
-  case "Prep":
-    if kv.txn_phase[op.Txn_id] == "Prepared" {
+  case Prep:
+    if kv.txn_phase[op.Txn_id] == Prep {
       return true, PrepReply{"OK", kv.lastReply[op.Txn_id].Prepare_ok, kv.lastReply[op.Txn_id].Reply_list}
-    } else if kv.txn_phase[op.Txn_id] == "Commited" {
+    } else if kv.txn_phase[op.Txn_id] == Commit {
       return true, PrepReply{Err:"OK"}
     } else {
       return false, nil
     }
-  case "Commit":
-    if kv.txn_phase[op.Txn_id] == "Comitted" {
+  case Commit:
+    if kv.txn_phase[op.Txn_id] == Commit {
       return true, CommitReply{"OK"}
     } else {
       return false, nil
@@ -120,7 +120,7 @@ func (kv *ShardKV) detectDup(op Op) (bool, interface{}) {
 
 func (kv *ShardKV) exeOp(theop Op) Err {
   for {
-    if theop.Type == "Prep" && kv.txn_id == theop.Txn_id && kv.dblock {
+    if theop.Type == Prep && kv.txn_id == theop.Txn_id && kv.dblock {
       theop = kv.getPrepOp()
     }
     kv.px.Start(kv.exeseq, theop)
@@ -135,11 +135,11 @@ func (kv *ShardKV) exeOp(theop Op) Err {
         kv.exeseq++
         
         switch do_op.Type {
-        case "Lock":
+        case Lock:
           kv.doLock(do_op)
-        case "Prep":
+        case Prep:
           kv.doPrep(do_op)
-        case "Commit":
+        case Commit:
           kv.doCommit(do_op)
         default:
           log.Fatal("Unsuported op type")
@@ -152,7 +152,7 @@ func (kv *ShardKV) exeOp(theop Op) Err {
         } 
       }
     }
-    if theop.Type == "Lock" && do_op.Txn_id != theop.Txn_id {
+    if theop.Type == Lock && do_op.Txn_id != theop.Txn_id {
       return ErrNoLock
     } else if do_op.Txn_id == theop.Txn_id && do_op.Type == theop.Type {
       return OK
@@ -167,14 +167,14 @@ func (kv *ShardKV) doLock(op Op) {
   kv.dblock = true
   kv.txn_id = op.Txn_id
   kv.curr_txn = op.Txn
-  kv.txn_phase[op.Txn_id] = "Locked"
+  kv.txn_phase[op.Txn_id] = Lock
 }
 
 func (kv *ShardKV) doPrep(op Op) {  
   if !kv.dblock || kv.txn_id != op.Txn_id {
     log.Fatal("[doPrep] Shit! Not locked by me")
   }
-  kv.txn_phase[op.Txn_id] = "Prepared"
+  kv.txn_phase[op.Txn_id] = Prep
   kv.lastReply[op.Txn_id] = LastReply{Prepare_ok: op.Prepare_ok, Reply_list: op.Reply_list}
 }
 
@@ -207,7 +207,7 @@ func (kv *ShardKV) doCommit(op Op) {
     }
     
     // TODO:: db has to be written into resistent storage
-    kv.txn_phase[op.Txn_id] = "Commited"
+    kv.txn_phase[op.Txn_id] = Commit
     kv.dblock = false
   }
 }
@@ -217,7 +217,7 @@ func (kv *ShardKV) Insert_txn(args *TxnArgs, reply *TxnReply) error {
   kv.mu.Lock()
   defer kv.mu.Unlock()
 
-  myop := Op{Type: "Lock", Txn: args.Txn, Txn_id: args.Txn_id}
+  myop := Op{Type: Lock, Txn: args.Txn, Txn_id: args.Txn_id}
   
   dup, val := kv.detectDup(myop)
   if dup {
@@ -282,9 +282,9 @@ func (kv *ShardKV) getPrepOp() Op {
   }
   var myop Op
   if prepare_ok {
-    myop = Op{Type: "Prep", Txn_id: kv.txn_id, Prepare_ok: prepare_ok, Reply_list: reply_list}
+    myop = Op{Type: Prep, Txn_id: kv.txn_id, Prepare_ok: prepare_ok, Reply_list: reply_list}
   } else {
-    myop = Op{Type: "Prep", Txn_id: kv.txn_id, Prepare_ok: prepare_ok}
+    myop = Op{Type: Prep, Txn_id: kv.txn_id, Prepare_ok: prepare_ok}
   }
   return myop
 }
@@ -293,7 +293,7 @@ func (kv *ShardKV) Prepare_handler(args *PrepArgs, reply *PrepReply) error {
   kv.mu.Lock()
   defer kv.mu.Unlock()
  
-  myop := Op{Type:"Prep", Txn_id:args.Txn_id}
+  myop := Op{Type:Prep, Txn_id:args.Txn_id}
   dup, val := kv.detectDup(myop)
   if dup {
     reply.Err = val.(PrepReply).Err
@@ -314,7 +314,7 @@ func (kv *ShardKV) Commit_handler(args *CommitArgs, reply *CommitReply) error {
   kv.mu.Lock()
   defer kv.mu.Unlock()
   
-  myop := Op{Type: "Commit", Txn_id: args.Txn_id, Commit: args.Commit}
+  myop := Op{Type: Commit, Txn_id: args.Txn_id, Commit: args.Commit}
   
   dup, val := kv.detectDup(myop)
   if dup {
@@ -339,11 +339,11 @@ func (kv *ShardKV) poll(){
      kv.exeseq++
         
      switch do_op.Type {
-     case "Lock":
+     case Lock:
        kv.doLock(do_op)
-     case "Prep":
+     case Prep:
        kv.doPrep(do_op)
-     case "Commit":
+     case Commit:
        kv.doCommit(do_op)
      default:
      }

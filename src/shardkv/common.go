@@ -1,5 +1,8 @@
 package shardkv
-import "hash/fnv"
+
+//import "hash/fnv"
+import "net/rpc"
+import "fmt"
 
 import "container/list"
 
@@ -39,19 +42,14 @@ type ReqReply struct {
 
 type LastReply struct {
   Prepare_ok bool
-  Reply_list list.List
-}
-
-type CopyData struct {
-  db map[int]map[string]string
-  lastOp map[int64]LastOp
+  Reply_list *list.List
 }
 
 type TxnArgs struct {
   Txn_id int
   Rpcid int
   Me int
-  Txn list.List
+  Txn *list.List
 }
 
 type TxnReply struct {
@@ -67,7 +65,7 @@ type PrepArgs struct {
 type PrepReply struct {
   Err Err
   Prepare_ok bool
-  Replies list.List
+  Replies *list.List
 }
 
 type CommitArgs struct {
@@ -124,7 +122,7 @@ func key2shard(key string) int {
   if len(key) > 0 {
     shard = int(key[0])
   }
-  shard %= shardmaster.NShards
+  shard %= NShards
   return shard
 }
 

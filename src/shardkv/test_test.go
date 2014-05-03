@@ -55,11 +55,12 @@ func check(db map[string]string, ck *Clerk) {
   if len(db) != len(results) {
     log.Fatal("results length is not correct")
   }
+
+	fmt.Printf("db = %+v\n reply = %+v\n", db, results)
   for _, req_reply := range results {
     key := req_reply.Key
     value := req_reply.Value
     if value != db[key] {
-			fmt.Printf("db = %+v\n reply = %+v\n", db, results)
       log.Fatal("value does not match")
     }
   }
@@ -124,12 +125,12 @@ func TestTxnAbort(t *testing.T) {
   reqs[0] = ReqArgs{"Put", "1", "2"}
   reqs[1] = ReqArgs{"Add", "2", "-2"}
   reqs[2] = ReqArgs{"Put", "3", "2"}
-  ck.RunTxn(reqs)
+  commit, value = ck.RunTxn(reqs)
 
 	if commit {
     log.Fatal("Should not commit")
   }
-
+	
   check(db, ck)
   fmt.Printf("  ... Passed\n")
 }

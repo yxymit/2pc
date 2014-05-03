@@ -184,6 +184,8 @@ func (kv *ShardKV) doCommit(op Op) {
   }
   
   if !op.Commit {
+		kv.txn_phase[op.Txn_id] = Commit
+    kv.dblock = false
     return
   } else {
     reply_list := kv.lastReply[op.Txn_id].Reply_list
@@ -259,7 +261,7 @@ func (kv *ShardKV) getPrepOp() Op {
       
     case "Get":
       
-      reply_list = append(reply_list, ReqReply{"Get", key, new_val})
+      reply_list = append(reply_list, ReqReply{"Get", key, curr_val})
       
     case "Add":
       

@@ -131,3 +131,94 @@ func TestTxnAbort(t *testing.T) {
   fmt.Printf("  ... Passed\n")
 }
 
+func TestTxnConcurrent(t *testing.T) {
+  gids, ha, _, clean := setup("basic", false)
+  defer clean()
+
+  fmt.Printf("Test: Three Client. Abort should roll back.\n")
+  
+  //db := make(map[string]string)
+  
+  groups := make(map[int64][]string)
+  for i, gid := range gids {
+    groups[gid] = ha[i]
+  }
+  
+	Ncli := 3
+	
+	var ck [NCli]*Clerk
+	for i: = 0; i < Ncli; i++ {
+		ck[i] := MakeClerk(i, groups);
+	}
+  
+  // Txn 1
+  reqs := make([]ReqArgs, 10)
+  for i := 0; i < 10; i++ {
+    reqs[i].Type = "Put"
+    reqs[i].Key = strconv.Itoa(i)
+    reqs[i].Value = strconv.Itoa(30)
+  }
+  
+	ck[0].RunTxn(reqs)
+
+	for i := 0; i < 10; i++{
+		reqs[i].Type = "Get"
+		reqs[i].Key = strconv.Itoa(i)
+		reqs[i].Value = strconv.Itoa(30)
+	}
+
+	_, replies := ck[0].RunTxn(reqs)
+
+	for i := 0; i < 10; i++{
+		if replies[i].Value != "30" {
+			log.Fatalf("Error: value is not put correctly\n")
+		}
+	}
+
+	for i := 0; i < 10; i++{
+		reqs[i].Type = "Add"
+		reqs[i].Key = strconv.Itoa(i)
+		reqs[i].Value = strconv.Itoa(-1)
+	}
+
+	
+	valueTouched := make([]bool, 30)
+
+	for i := 0; i < 30; i++{
+		valueTouched[i] = false
+	}
+	
+	var ca [Ncli]chan bool
+	
+	for iter := 0; iter < 10; i++ {
+		for cli := 0; cli < Ncli; cli++ {
+			ca[cli] = make(chan bool)
+			go func(me int) {
+				defer func() {ca[me] <- true}
+				ok, txnReply := ck[i].RunTxn(reqs)
+				if ok {
+					for i := 0; i < 9; i++ {
+						if txnReply[i].Value != txnReply[i+1].Value {
+							log.Fatalf("Error: add fails, values are not same\n")
+						}
+					}
+					if !valueTouched[strconv.Atoi(txnReply[i].Value)] {
+						valueTouched[strconv.Atoi(txnReply[i].Value)] = true
+					} else {
+						log.Fatalf("Error: add fails, this value has already been added\n")
+					}
+				} else {
+					log.Fatalf("Error: should not abort\n")
+				}
+			}(cli)
+		}
+
+		for i := 0; i < Ncli; i++ {
+			<- ca[i]
+		}
+	}
+
+	
+
+  fmt.Printf("  ... Passed\n")
+}

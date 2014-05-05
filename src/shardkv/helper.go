@@ -11,6 +11,5 @@ func intInSlice(a int, list []int) bool {
 }
 
 func dirname(gid int64, sid int) string{
-	return "gid_"+strconv.Itoa(int(gid))+"_sid_"+strconv.Itoa(sid)+"_data_dir/" 
+  return "gid_"+strconv.Itoa(int(gid))+"_sid_"+strconv.Itoa(sid)+"_data_dir/" 
 }
-

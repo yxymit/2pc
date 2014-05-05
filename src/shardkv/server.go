@@ -80,7 +80,7 @@ type ShardKV struct {
   dblock bool
   txn_id int
   curr_txn []ReqArgs
-//  curr_txn *list.List
+  //  curr_txn *list.List
   //reply_list list.List
 
   txn_phase map[int]string // db[txn_id] -> "Locked"/"Prepared"/"Commited"
@@ -111,7 +111,7 @@ func (kv *ShardKV) detectDup(op Op) (bool, interface{}) {
     } else {
       return false, nil
     }
-  default :
+    default :
     log.Fatal("Unsuportted Operation Type")
   }
   return false, nil
@@ -309,7 +309,7 @@ func (kv *ShardKV) getPrepOp() Op {
       
       x, err0 := strconv.Atoi(curr_val)
       y, err1 := strconv.Atoi(new_val)
-        
+      
       if err0 != nil || err1 != nil {
         log.Fatalf("Values are not integers\n")
       }
@@ -336,7 +336,7 @@ func (kv *ShardKV) getPrepOp() Op {
 func (kv *ShardKV) Prepare_handler(args *PrepArgs, reply *PrepReply) error {
   kv.mu.Lock()
   defer kv.mu.Unlock()
- 
+  
   myop := Op{Type:Prep, Txn_id:args.Txn_id}
   dup, val := kv.detectDup(myop)
   if dup {
@@ -378,20 +378,20 @@ func (kv *ShardKV) poll(){
 
   decided, decop := kv.px.Poll(kv.exeseq) 
 
-   if decided {
-     do_op := decop.(Op)
-     kv.exeseq++
-        
-     switch do_op.Type {
-     case Lock:
-       kv.doLock(do_op)
-     case Prep:
-       kv.doPrep(do_op)
-     case Commit:
-       kv.doCommit(do_op)
-     default:
-     }
-   }
+  if decided {
+    do_op := decop.(Op)
+    kv.exeseq++
+    
+    switch do_op.Type {
+    case Lock:
+      kv.doLock(do_op)
+    case Prep:
+      kv.doPrep(do_op)
+    case Commit:
+      kv.doCommit(do_op)
+    default:
+    }
+  }
 }
 
 
@@ -416,7 +416,7 @@ func StartServer(gid int64, servers []string, me int) *ShardKV {
   gob.Register(ReqArgs{}) 
   gob.Register(TxnArgs{}) 
   gob.Register(make(map[int]map[string]string))
-    
+  
   kv := new(ShardKV)
   kv.me = me
   kv.gid = gid
@@ -432,7 +432,7 @@ func StartServer(gid int64, servers []string, me int) *ShardKV {
 
 	os.MkdirAll(dirname(gid,me),os.ModeDir)
 	
-//  curr_txn []ReqArgs
+  //  curr_txn []ReqArgs
 
   kv.txn_phase = make(map[int]string)
   kv.lastReply = make(map[int]LastReply)

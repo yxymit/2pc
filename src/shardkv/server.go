@@ -77,11 +77,12 @@ type ShardKV struct {
   dblock bool
   txn_id int
   curr_txn []ReqArgs
-//  curr_txn *list.List
-  //reply_list list.List
 
   txn_phase map[int]string // db[txn_id] -> "Locked"/"Prepared"/"Commited"
   lastReply map[int]LastReply // db[txn_id] -> Replies
+
+  // For DEBUG
+  failpoint string  // BeforePrepare, AfterPrepare, BeforeCommit, AfterCommit 
 }
 
 func (kv *ShardKV) detectDup(op Op) (bool, interface{}) {
@@ -291,7 +292,12 @@ func (kv *ShardKV) getPrepOp() Op {
 func (kv *ShardKV) Prepare_handler(args *PrepArgs, reply *PrepReply) error {
   kv.mu.Lock()
   defer kv.mu.Unlock()
- 
+  
+  if kv.failpoint == "BeforePrepare" {
+    kv.kill()
+    return nil
+  }
+
   myop := Op{Type:Prep, Txn_id:args.Txn_id}
   dup, val := kv.detectDup(myop)
   if dup {
@@ -302,6 +308,11 @@ func (kv *ShardKV) Prepare_handler(args *PrepArgs, reply *PrepReply) error {
   }
 
   reply.Err = kv.exeOp(myop)
+  
+  if kv.failpoint == "AfterPrepare" {
+    kv.kill()
+    return nil
+  }
 
   reply.Prepare_ok = kv.lastReply[args.Txn_id].Prepare_ok
   reply.Replies = kv.lastReply[args.Txn_id].Reply_list
@@ -313,6 +324,11 @@ func (kv *ShardKV) Commit_handler(args *CommitArgs, reply *CommitReply) error {
   kv.mu.Lock()
   defer kv.mu.Unlock()
   
+  if kv.failpoint == "BeforeCommit" {
+    kv.kill()
+    return nil
+  }
+
   myop := Op{Type: Commit, Txn_id: args.Txn_id, Commit: args.Commit}
   
   dup, val := kv.detectDup(myop)
@@ -322,7 +338,11 @@ func (kv *ShardKV) Commit_handler(args *CommitArgs, reply *CommitReply) error {
   }
   
   reply.Err = kv.exeOp(myop)
-
+  if kv.failpoint == "AfterCommit" {
+    kv.kill()
+    return nil
+  }
+ 
   return nil
 
 }
@@ -366,7 +386,7 @@ func (kv *ShardKV) kill() {
 //   in this replica group.
 // Me is the index of this server in servers[].
 //
-func StartServer(gid int64, servers []string, me int) *ShardKV {
+func StartServer(gid int64, servers []string, me int, failpoint string) *ShardKV {
   gob.Register(Op{}) 
   gob.Register(ReqArgs{}) 
   gob.Register(TxnArgs{}) 
@@ -394,7 +414,7 @@ func StartServer(gid int64, servers []string, me int) *ShardKV {
   rpcs := rpc.NewServer()
   rpcs.Register(kv)
 
-  kv.px = paxos.Make(servers, me, rpcs)
+  kv.px = paxos.MakePaxos(servers, me, rpcs, servers[me])
 
 
   os.Remove(servers[me])

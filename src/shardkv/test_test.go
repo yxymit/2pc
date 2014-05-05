@@ -83,7 +83,7 @@ func setup(tag string, unreliable bool) ([]int64, [][]string, [][]*ShardKV, func
       ha[i][j] = port(tag+"s", (i*nreplicas)+j)
     }
     for j := 0; j < nreplicas; j++ {
-      sa[i][j] = StartServer(gids[i], ha[i], j)
+      sa[i][j] = StartServer(gids[i], ha[i], j, "")
       sa[i][j].unreliable = unreliable
     }
   }

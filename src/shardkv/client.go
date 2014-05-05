@@ -8,7 +8,7 @@ import "log"
 import "bytes"
 import "encoding/gob"
 
-const Persistent = false
+const Persistent = true
 
 type Clerk struct {
   mu sync.Mutex // one RPC at a time

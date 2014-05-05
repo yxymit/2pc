@@ -31,10 +31,20 @@ func mcleanup(sma []*shardmaster.ShardMaster) {
 }
 */
 
-func cleanup(sa [][]*ShardKV) {
+func cleanup(sa [][]*ShardKV, gid []int64, nreplicas int, rmFiles bool) {
   for i := 0; i < len(sa); i++ {
     for j := 0; j < len(sa[i]); j++ {
       sa[i][j].kill()
+    }
+  }
+	
+  if rmFiles {
+    for i := 0; i < len(gid); i++ {
+      for j := 0; j < nreplicas; j++ {
+        if err := os.RemoveAll(dirname(gid[i],j)); err != nil{
+          log.Fatal("RemoveDirs Failed")
+        }
+      }
     }
   }
 }
@@ -56,7 +66,7 @@ func check(db map[string]string, ck *Clerk) {
     log.Fatal("results length is not correct")
   }
 
-    fmt.Printf("db = %+v\n reply = %+v\n", db, results)
+  fmt.Printf("db = %+v\n reply = %+v\n", db, results)
   for _, req_reply := range results {
     key := req_reply.Key
     value := req_reply.Value
@@ -66,7 +76,7 @@ func check(db map[string]string, ck *Clerk) {
   }
 }
 
-func setup(tag string, unreliable bool) ([]int64, [][]string, [][]*ShardKV, func()) {
+func setup(tag string, unreliable bool) ([]int64, [][]string, [][]*ShardKV, func(rmFiles bool)) {
   runtime.GOMAXPROCS(4)
 
   const ngroups = 3   // replica groups
@@ -88,14 +98,14 @@ func setup(tag string, unreliable bool) ([]int64, [][]string, [][]*ShardKV, func
     }
   }
 
-  clean := func() { cleanup(sa) } // ; mcleanup(sma) }
+  clean := func(rmFiles bool) { cleanup(sa, gids, nreplicas, rmFiles) } // ; mcleanup(sma) }
   return gids, ha, sa, clean
 }
 
 
 func txnAbort(t *testing.T, unreliable bool) {
   gids, ha, _, clean := setup("basic", unreliable)
-  defer clean()
+  defer clean(true)
 
   fmt.Printf("Test: Single Client. Abort should roll back.\n")
   
@@ -106,7 +116,7 @@ func txnAbort(t *testing.T, unreliable bool) {
     groups[gid] = ha[i]
   }
   ck := MakeClerk(0, groups)
-   
+  
   // Txn 1
   reqs := make([]ReqArgs, 10)
   for i := 0; i < 10; i++ {
@@ -119,7 +129,7 @@ func txnAbort(t *testing.T, unreliable bool) {
   fmt.Printf("commit=%v\nvalue=%+v\n", commit, value)
   // check results
   check(db, ck) 
-   
+  
   reqs = make([]ReqArgs, 3)
   reqs[0] = ReqArgs{"Put", "1", "2"}
   reqs[1] = ReqArgs{"Add", "2", "-2"}
@@ -129,7 +139,7 @@ func txnAbort(t *testing.T, unreliable bool) {
   if commit {
     log.Fatal("Should not commit")
   }
-    
+  
   check(db, ck)
   fmt.Printf("  ... Passed\n")
 }
@@ -143,7 +153,7 @@ func TestTxnAbortUnreliable(t *testing.T) {
 
 func txnConcurrent(t *testing.T, unreliable bool) {
   gids, ha, _, clean := setup("basic", unreliable)
-  defer clean()
+  defer clean(true)
 
   fmt.Printf("Test: Three Client. Abort should roll back.\n")
   //db := make(map[string]string)
@@ -153,12 +163,12 @@ func txnConcurrent(t *testing.T, unreliable bool) {
     groups[gid] = ha[i]
   }
   
-    Ncli := 3
-    
-    ck := make([]*Clerk, Ncli)
-    for i := 0; i < Ncli; i++ {
-        ck[i] = MakeClerk(i, groups);
-    }
+  Ncli := 3
+  
+  ck := make([]*Clerk, Ncli)
+  for i := 0; i < Ncli; i++ {
+    ck[i] = MakeClerk(i, groups);
+  }
   
   // Txn 1
   reqs := make([]ReqArgs, 10)
@@ -169,66 +179,66 @@ func txnConcurrent(t *testing.T, unreliable bool) {
     reqs[i].Value = strconv.Itoa(30)
   }
   
-    ck[0].RunTxn(reqs, "")
+  ck[0].RunTxn(reqs, "")
 
-    for i := 0; i < 10; i++{
-        reqs[i].Type = "Get"
-        reqs[i].Key = strconv.Itoa(i)
-        reqs[i].Value = strconv.Itoa(30)
+  for i := 0; i < 10; i++{
+    reqs[i].Type = "Get"
+    reqs[i].Key = strconv.Itoa(i)
+    reqs[i].Value = strconv.Itoa(30)
+  }
+
+  _, replies := ck[0].RunTxn(reqs, "")
+
+  for i := 0; i < 10; i++{
+    if replies[i].Value != "30" {
+      log.Fatalf("Error: value is not put correctly\n")
     }
+  }
 
-    _, replies := ck[0].RunTxn(reqs, "")
+  for i := 0; i < 10; i++{
+    reqs[i].Type = "Add"
+    reqs[i].Key = strconv.Itoa(i)
+    reqs[i].Value = strconv.Itoa(-1)
+  }
 
-    for i := 0; i < 10; i++{
-        if replies[i].Value != "30" {
-            log.Fatalf("Error: value is not put correctly\n")
+  
+  valueTouched := make([]bool, 30)
+
+  for i := 0; i < 30; i++{
+    valueTouched[i] = false
+  }
+  
+  ca := make([]chan bool, Ncli)
+  
+  for iter := 0; iter < 10; iter++ {
+    for cli := 0; cli < Ncli; cli++ {
+      ca[cli] = make(chan bool)
+      go func(me int) {
+        defer func() {ca[me] <- true}()
+        ok, txnReply := ck[me].RunTxn(reqs, "")
+        if ok {
+          for i := 0; i < 9; i++ {
+            if txnReply[i].Value != txnReply[i+1].Value {
+              log.Fatalf("Error: add fails, values are not same\n")
+            }
+          }
+          
+          ind, _ := strconv.Atoi(txnReply[0].Value)
+          if !valueTouched[ind] {
+            valueTouched[ind] = true
+          } else {
+            log.Fatalf("Error: add fails, this value has already been added\n")
+          }
+        } else {
+          log.Fatalf("Error: should not abort\n")
         }
-    }
-
-    for i := 0; i < 10; i++{
-        reqs[i].Type = "Add"
-        reqs[i].Key = strconv.Itoa(i)
-        reqs[i].Value = strconv.Itoa(-1)
-    }
-
-    
-    valueTouched := make([]bool, 30)
-
-    for i := 0; i < 30; i++{
-        valueTouched[i] = false
+      }(cli)
     }
     
-    ca := make([]chan bool, Ncli)
-    
-    for iter := 0; iter < 10; iter++ {
-        for cli := 0; cli < Ncli; cli++ {
-            ca[cli] = make(chan bool)
-            go func(me int) {
-                defer func() {ca[me] <- true}()
-                ok, txnReply := ck[me].RunTxn(reqs, "")
-                if ok {
-                    for i := 0; i < 9; i++ {
-                        if txnReply[i].Value != txnReply[i+1].Value {
-                            log.Fatalf("Error: add fails, values are not same\n")
-                        }
-                    }
-                    
-                    ind, _ := strconv.Atoi(txnReply[0].Value)
-                    if !valueTouched[ind] {
-                        valueTouched[ind] = true
-                    } else {
-                        log.Fatalf("Error: add fails, this value has already been added\n")
-                    }
-                } else {
-                    log.Fatalf("Error: should not abort\n")
-                }
-            }(cli)
-        }
-
-        for i := 0; i < Ncli; i++ {
-            <- ca[i]
-        }
+    for i := 0; i < Ncli; i++ {
+      <- ca[i]
     }
+  }
   fmt.Printf("  ... Passed\n")
 }
 
@@ -237,4 +247,50 @@ func TestTxnConcurrent(t *testing.T) {
 }
 func TestTxnConcurrentUnreliable(t *testing.T) {
   txnConcurrent(t, true)
+}
+
+func testDbPersistent(t *testing.T, unreliable bool) {
+	gids, ha, _, clean := setup("basic", unreliable)
+  //defer clean(true)
+
+  fmt.Printf("Test: Single Client. Abort should roll back.\n")
+  
+  db := make(map[string]string)
+  
+  groups := make(map[int64][]string)
+  for i, gid := range gids {
+    groups[gid] = ha[i]
+  }
+  ck := MakeClerk(0, groups)
+  
+  // Txn 1
+  reqs := make([]ReqArgs, 10)
+  for i := 0; i < 10; i++ {
+    reqs[i].Type = "Put"
+    reqs[i].Key = strconv.Itoa(i)
+    reqs[i].Value = strconv.Itoa(1)
+    db[ reqs[i].Key ] = reqs[i].Value
+  }
+  commit, value := ck.RunTxn(reqs, "")
+  fmt.Printf("commit=%v\nvalue=%+v\n", commit, value)
+  // check results
+  check(db, ck) 
+  clean(false)
+
+  gids, ha, _, clean = setup("basic", unreliable)
+  defer clean(true)
+	
+  groups = make(map[int64][]string)
+  for i, gid := range gids {
+    groups[gid] = ha[i]
+  }
+  ck = MakeClerk(0, groups)
+
+  check(db, ck)
+  
+  fmt.Printf("  ... Passed\n")
+}
+
+func TestDbPersistent(t *testing.T) {
+	testDbPersistent(t, false)
 }

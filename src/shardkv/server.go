@@ -9,10 +9,13 @@ import "paxos"
 import "sync"
 import "os"
 import "syscall"
+//import "bytes"
 import "encoding/gob"
 import "math/rand"
 import "shardmaster"
 import "strconv"
+//import "bufio"
+import "io/ioutil"
 
 const Debug=1
 const CLR_0 = "\x1b[30;1m"
@@ -109,7 +112,7 @@ func (kv *ShardKV) detectDup(op Op) (bool, interface{}) {
     } else {
       return false, nil
     }
-  default :
+    default :
     log.Fatal("Unsuportted Operation Type")
   }
   return false, nil
@@ -176,6 +179,29 @@ func (kv *ShardKV) doPrep(op Op) {
   kv.lastReply[op.Txn_id] = LastReply{Prepare_ok: op.Prepare_ok, Reply_list: op.Reply_list}
 }
 
+
+func (kv *ShardKV) readDisk(key string) string {
+  filename := dirname(kv.gid,kv.me)+key
+	
+  bytes, err := ioutil.ReadFile(filename)
+  if err != nil {
+    log.Fatalf("[Server] ReadDisk Fail: Filename = %s doesn't exit\n", filename)
+  }
+  value := string(bytes)
+  return value
+}
+
+func (kv *ShardKV) writeDisk(key string, value string) {
+  filename := dirname(kv.gid,kv.me)+key
+	
+  err := ioutil.WriteFile(filename, []byte(value), 0644)
+	
+  if err != nil {
+    log.Fatalf("[Server] WriteDisk Fail: Filename = %s, Err = %v\n", filename, err )
+  }
+  return
+}
+
 func (kv *ShardKV) doCommit(op Op) {
   if !kv.dblock || kv.txn_id != op.Txn_id {
     log.Fatal("[doPrep] Shit! Not locked by me")
@@ -190,12 +216,14 @@ func (kv *ShardKV) doCommit(op Op) {
     for _, theop := range reply_list {
       switch theop.Type {
       default:
-        log.Fatalf("Operation %T not supported by the database", theop)
+        log.Fatalf("Operation %T not supported by the database\n", theop)
       case "Put":
         key := theop.Key
         val := theop.Value
         shard_id := key2shard(key)
         kv.db[shard_id][key] = val
+        //comit to disk
+        kv.writeDisk(key,val)
       case "Get":
         //do nothing
       case "Add":
@@ -203,10 +231,11 @@ func (kv *ShardKV) doCommit(op Op) {
         val := theop.Value
         shard_id := key2shard(key)
         kv.db[shard_id][key] = val
+        //comit to disk
+        kv.writeDisk(key,val)
       }  
     }
     
-    // TODO:: db has to be written into resistent storage
     kv.txn_phase[op.Txn_id] = Commit
     kv.dblock = false
   }
@@ -242,12 +271,25 @@ func (kv *ShardKV) getPrepOp() Op {
   for _, theop := range kv.curr_txn {
     key := theop.Key
     new_val := theop.Value
+
     shard_id := key2shard(key)
+
+    _, ok0 := kv.db[shard_id]
+    _, ok1 := kv.db[shard_id][key]
+		
+    if !ok0 || !ok1 {
+      filename := dirname(kv.gid,kv.me)+key
+      if _, err := os.Stat(filename); err == nil {
+        value := kv.readDisk(key)
+        kv.db[shard_id][key] = value
+      }
+    }
+    
     curr_val := kv.db[shard_id][key]
 
     switch theop.Type {
     default:
-      log.Fatalf("Operation %T not supported by the database", theop)
+      log.Fatalf("Operation %T not supported by the database\n", theop)
 
     case "Put":
       
@@ -265,7 +307,7 @@ func (kv *ShardKV) getPrepOp() Op {
       
       x, err0 := strconv.Atoi(curr_val)
       y, err1 := strconv.Atoi(new_val)
-        
+      
       if err0 != nil || err1 != nil {
         log.Fatalf("Values are not integers\n")
       }
@@ -353,20 +395,20 @@ func (kv *ShardKV) poll(){
 
   decided, decop := kv.px.Poll(kv.exeseq) 
 
-   if decided {
-     do_op := decop.(Op)
-     kv.exeseq++
-        
-     switch do_op.Type {
-     case Lock:
-       kv.doLock(do_op)
-     case Prep:
-       kv.doPrep(do_op)
-     case Commit:
-       kv.doCommit(do_op)
-     default:
-     }
-   }
+  if decided {
+    do_op := decop.(Op)
+    kv.exeseq++
+    
+    switch do_op.Type {
+    case Lock:
+      kv.doLock(do_op)
+    case Prep:
+      kv.doPrep(do_op)
+    case Commit:
+      kv.doCommit(do_op)
+    default:
+    }
+  }
 }
 
 
@@ -391,7 +433,7 @@ func StartServer(gid int64, servers []string, me int, failpoint string) *ShardKV
   gob.Register(ReqArgs{}) 
   gob.Register(TxnArgs{}) 
   gob.Register(make(map[int]map[string]string))
-    
+  
   kv := new(ShardKV)
   kv.me = me
   kv.gid = gid
@@ -404,7 +446,10 @@ func StartServer(gid int64, servers []string, me int, failpoint string) *ShardKV
   for i := 0; i < shardmaster.NShards; i++ {
     kv.db[i] = make(map[string]string)
   }
-//  curr_txn []ReqArgs
+
+	os.MkdirAll(dirname(gid,me),os.ModeDir)
+	
+  //  curr_txn []ReqArgs
 
   kv.txn_phase = make(map[int]string)
   kv.lastReply = make(map[int]LastReply)

@@ -180,28 +180,25 @@ func (kv *ShardKV) doPrep(op Op) {
 
 
 func (kv *ShardKV) readDisk(key string) string {
-	filename := dirname(kv.gid,kv.me)+key
+  filename := dirname(kv.gid,kv.me)+key
 	
-	bytes, err := ioutil.ReadFile(filename)
-	if err != nil {
-		log.Fatalf("[Server] ReadDisk Fail: Filename = %s doesn't exit\n", filename)
-	}
-	value := string(bytes)
-	return value
+  bytes, err := ioutil.ReadFile(filename)
+  if err != nil {
+    log.Fatalf("[Server] ReadDisk Fail: Filename = %s doesn't exit\n", filename)
+  }
+  value := string(bytes)
+  return value
 }
 
 func (kv *ShardKV) writeDisk(key string, value string) {
-	filename := dirname(kv.gid,kv.me)+key
+  filename := dirname(kv.gid,kv.me)+key
 	
+  err := ioutil.WriteFile(filename, []byte(value), 0644)
 	
-	err := ioutil.WriteFile(filename, []byte(value), 0644)
-	
-	if err != nil {
-		log.Fatalf("[Server] WriteDisk Fail: Filename = %s, Err = %v\n", filename, err )
-	}
-
-	return
-	
+  if err != nil {
+    log.Fatalf("[Server] WriteDisk Fail: Filename = %s, Err = %v\n", filename, err )
+  }
+  return
 }
 
 func (kv *ShardKV) doCommit(op Op) {
@@ -224,8 +221,8 @@ func (kv *ShardKV) doCommit(op Op) {
         val := theop.Value
         shard_id := key2shard(key)
         kv.db[shard_id][key] = val
-				//comit to disk
-				kv.writeDisk(key,val)
+        //comit to disk
+        kv.writeDisk(key,val)
       case "Get":
         //do nothing
       case "Add":
@@ -233,8 +230,8 @@ func (kv *ShardKV) doCommit(op Op) {
         val := theop.Value
         shard_id := key2shard(key)
         kv.db[shard_id][key] = val
-				//comit to disk
-				kv.writeDisk(key,val)
+        //comit to disk
+        kv.writeDisk(key,val)
       }  
     }
     
@@ -276,18 +273,18 @@ func (kv *ShardKV) getPrepOp() Op {
 
     shard_id := key2shard(key)
 
-		_, ok0 := kv.db[shard_id]
-		_, ok1 := kv.db[shard_id][key]
+    _, ok0 := kv.db[shard_id]
+    _, ok1 := kv.db[shard_id][key]
 		
-		if !ok0 || !ok1 {
-			filename := dirname(kv.gid,kv.me)+key
-			if _, err := os.Stat(filename); err == nil {
-				value := kv.readDisk(key)
-				kv.db[shard_id][key] = value
-			}
-		}
+    if !ok0 || !ok1 {
+      filename := dirname(kv.gid,kv.me)+key
+      if _, err := os.Stat(filename); err == nil {
+        value := kv.readDisk(key)
+        kv.db[shard_id][key] = value
+      }
+    }
     
-		curr_val := kv.db[shard_id][key]
+    curr_val := kv.db[shard_id][key]
 
     switch theop.Type {
     default:

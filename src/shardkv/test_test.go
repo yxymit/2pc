@@ -38,15 +38,15 @@ func cleanup(sa [][]*ShardKV, gid []int64, nreplicas int, rmFiles bool) {
     }
   }
 	
-	if rmFiles {
-		for i := 0; i < len(gid); i++ {
-			for j := 0; j < nreplicas; j++ {
-				if err := os.RemoveAll(dirname(gid[i],j)); err != nil{
-					log.Fatal("RemoveDirs Failed")
-				}
-			}
-		}
-	}
+  if rmFiles {
+    for i := 0; i < len(gid); i++ {
+      for j := 0; j < nreplicas; j++ {
+        if err := os.RemoveAll(dirname(gid[i],j)); err != nil{
+          log.Fatal("RemoveDirs Failed")
+        }
+      }
+    }
+  }
 }
 
 func check(db map[string]string, ck *Clerk) {
@@ -277,19 +277,17 @@ func testDbPersistent(t *testing.T, unreliable bool) {
   check(db, ck) 
   clean(false)
 
-	gids, ha, _, clean = setup("basic", unreliable)
-	defer clean(true)
+  gids, ha, _, clean = setup("basic", unreliable)
+  defer clean(true)
 	
-	groups = make(map[int64][]string)
+  groups = make(map[int64][]string)
   for i, gid := range gids {
     groups[gid] = ha[i]
   }
   ck = MakeClerk(0, groups)
 
-	check(db, ck)
-	
-	
-
+  check(db, ck)
+  
   fmt.Printf("  ... Passed\n")
 }
 

@@ -1,17 +1,30 @@
 package shardkv
 
-import "shardmaster"
-//import "time"
+import "time"
 import "sync"
+import "strconv"
+import "os"
+import "log"
+import "bytes"
+import "encoding/gob"
+
+const Persistent = false
 
 type Clerk struct {
   mu sync.Mutex // one RPC at a time
-  config shardmaster.Config
   groups map[int64][]string // gid -> servers[]
   gids []int64
   txnid int
   me int
   rpcid int
+  curtxn * CurTxn
+}
+
+type CurTxn struct { 
+  txnid int
+  txns map[int64]*TxnArgs // txns[group_id] -> TxnArgs
+  phase string // "Started", "Locked", "Prepared", "Done"
+  prepare_ok bool
 }
 
 func MakeClerk(me int, groups map[int64][]string) *Clerk {
@@ -23,9 +36,14 @@ func MakeClerk(me int, groups map[int64][]string) *Clerk {
     ck.gids[i] = k
     i++
   }
-  ck.txnid = 0
+  ck.txnid = me
   ck.me = me
   ck.rpcid = 0
+
+  if ck.LoadState() {
+    ck.txnid = ck.curtxn.txnid
+    ck.runCurTxn("")
+  }
   return ck
 }
 
@@ -34,26 +52,7 @@ func (ck *Clerk) shard2group(shard int) int64 {
   return ck.gids[ shard % len(ck.gids) ]
 }
 
-func (ck *Clerk) RunTxn(reqs []ReqArgs) (bool, []ReqReply) {
-  //
-  // partition the requests based on groups
-//  var txns map[int64]*TxnArgs // [gid] -> *TxnArgs
-  txns := make(map[int64]*TxnArgs)
-  txnid := ck.txnid * 100 + ck.me
-  for _, req := range reqs {
-    gid := ck.shard2group( key2shard(req.Key) )
-    _, ok := txns[gid]
-    if !ok {
-      txns[gid] = new(TxnArgs)
-      txns[gid].Txn_id = txnid
-    } 
-    txns[gid].Txn = append(txns[gid].Txn, req)
-  }
-  
-  DPrintfCLR(1, "Ready to send out Lock requests")
-  //
-  // send the requests belong to a group to that group 
-  // Must lock the groups in a fixed order
+func (ck *Clerk) LockGroups(txns map[int64]*TxnArgs) {
   for _, gid := range ck.gids {
     txn, ok := txns[gid]
     if ok {  // the gid is involved in this txn. send request
@@ -68,11 +67,14 @@ func (ck *Clerk) RunTxn(reqs []ReqArgs) (bool, []ReqReply) {
             locked = true
             break
           }
+          time.Sleep(100 * time.Millisecond)
         }
       }
     }
   }
-  DPrintfCLR(1, "All groups are locked. Ready to send Prepare requests")
+}
+
+func (ck *Clerk) PrepareGroups(txns map[int64]*TxnArgs) (bool, []ReqReply) {
   results := make([]ReqReply, 0)
   //
   // All groups are locked.
@@ -81,14 +83,13 @@ func (ck *Clerk) RunTxn(reqs []ReqArgs) (bool, []ReqReply) {
   for _, gid := range ck.gids {
     _, ok := txns[gid]
     if ok {
-      args := PrepArgs{txnid, 0, ck.me}
+      args := PrepArgs{ck.txnid, 0, ck.me}
       var reply PrepReply
       group_prepare_ready := false
       for !group_prepare_ready {
         for _, srv := range ck.groups[gid] {
           ok := call(srv, "ShardKV.Prepare_handler", &args, &reply)
           if ok && reply.Err == OK {
-            DPrintfCLR(2, "gid=%d. prepare_ok=%v", gid, reply.Prepare_ok)
             group_prepare_ready = true
             if !reply.Prepare_ok {
               prepare_ok = false
@@ -96,19 +97,21 @@ func (ck *Clerk) RunTxn(reqs []ReqArgs) (bool, []ReqReply) {
             results = append(results, reply.Replies...) 
             break
           }
+          time.Sleep(100 * time.Millisecond)
         }
       }
     }
   }
+  return prepare_ok, results
+}
 
-  DPrintfCLR(1, "Prepares returned. prepare_ok=%v", prepare_ok)
-  // All Prepare results are back. send out the second phase commit/abort message.
+func (ck *Clerk) CommitGroups(txns map[int64]*TxnArgs, prepare_ok bool) {
   for _, gid := range ck.gids {
     _, ok := txns[gid]
     if ok {
-      args := CommitArgs{txnid, prepare_ok, 0, ck.me}
+      args := CommitArgs{ck.txnid, prepare_ok, 0, ck.me}
       var reply CommitReply
-      committed := false    
+      committed := false
       for !committed {
         for _, srv := range ck.groups[gid] {
           ok := call(srv, "ShardKV.Commit_handler", &args, &reply)
@@ -116,10 +119,105 @@ func (ck *Clerk) RunTxn(reqs []ReqArgs) (bool, []ReqReply) {
             committed = true
             break
           }
+          time.Sleep(100 * time.Millisecond)
         }
       }
     }
   }
-  ck.txnid ++
+}
+
+func (ck *Clerk) MakePersistent() {
+  filename := "./client_persistent/client"+strconv.Itoa(ck.me)+".txt"
+  f, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY, 0666)
+  if err != nil {
+    log.Fatal(err)
+  }
+  buf := new(bytes.Buffer)
+  enc := gob.NewEncoder(buf)
+  enc.Encode(ck.curtxn)
+  f.Write(buf.Bytes())
+  f.Close()
+}
+//
+// returns whether the client state can be found on the disk
+func (ck *Clerk) LoadState() bool {
+  filename := "./client_persistent/client"+strconv.Itoa(ck.me)+".txt"
+  if _, err := os.Stat(filename); err == nil {
+    f, err := os.Open(filename)
+    if err != nil {
+      log.Fatal(err)
+    }
+    ck.curtxn = new(CurTxn)
+    dec:= gob.NewDecoder(f)
+    err = dec.Decode(ck.curtxn)
+    f.Close()
+    return true
+  }
+  return false
+}
+
+func (ck *Clerk) RunTxn(reqs []ReqArgs, failpoint string) (bool, []ReqReply) {
+  ck.mu.Lock()
+  defer ck.mu.Unlock()
+  
+  // 
+  // assign the requests to their corresponding groups
+  ck.curtxn = new(CurTxn)
+  ck.curtxn.txnid = ck.txnid
+  ck.curtxn.phase = "Started"
+  ck.curtxn.txns = make(map[int64]*TxnArgs)
+  for _, req := range reqs {
+    gid := ck.shard2group( key2shard(req.Key) )
+    _, ok := ck.curtxn.txns[gid]
+    if !ok {
+      ck.curtxn.txns[gid] = new(TxnArgs)
+      ck.curtxn.txns[gid].Txn_id = ck.txnid
+    } 
+    ck.curtxn.txns[gid].Txn = append(ck.curtxn.txns[gid].Txn, req)
+  }
+  
+  return ck.runCurTxn(failpoint)
+}
+
+func (ck *Clerk) runCurTxn(failpoint string) (bool, []ReqReply) {
+  // 
+  // send out the lock requests
+  DPrintfCLR(1, "[Clerk.runCurTxn] Will run txn %d. phase=%v", ck.curtxn.txnid, ck.curtxn.phase) 
+  
+  if ck.curtxn.phase == "Started" {
+    ck.LockGroups(ck.curtxn.txns)
+    ck.curtxn.phase = "Locked"
+    if Persistent {
+      ck.MakePersistent()
+    }
+  }
+
+  DPrintfCLR(1, "[Clerk.runCurTxn] groups locked, start prepare phase") 
+  
+  var prepare_ok bool
+  var results []ReqReply
+  if ck.curtxn.phase == "Locked" {
+    prepare_ok, results = ck.PrepareGroups(ck.curtxn.txns)
+    ck.curtxn.prepare_ok = prepare_ok 
+    if failpoint == "BeforeDiskWrite" {
+      return false, nil
+    }
+    ck.curtxn.phase = "Prepared"
+    if Persistent {
+      ck.MakePersistent()
+    }
+  }
+ 
+  if failpoint == "AfterDiskWrite" {
+    return false, nil
+  }
+
+  DPrintfCLR(1, "[Clerk.runCurTxn] groups prepared, start commit phase") 
+  
+  if ck.curtxn.phase == "Prepared" {
+    ck.CommitGroups(ck.curtxn.txns, prepare_ok)
+  }
+  ck.txnid += 100
+  
   return prepare_ok, results
 }

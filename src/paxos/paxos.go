@@ -117,7 +117,7 @@ func (px *Paxos) Propose(seq int, v interface{}) {
   if ins == nil {
     return
   }
-  for !ins.Decided && seq > px.minseq[px.me] {
+  for !px.dead && !ins.Decided && seq > px.minseq[px.me] {
     ts := time.Now().UnixNano()
     ts = ts * int64(len(px.peers)) + int64(px.me)
     // Send prepare requests to every peer

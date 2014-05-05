@@ -2,6 +2,7 @@ package shardkv
 
 //import "hash/fnv"
 import "net/rpc"
+import "strconv"
 import "fmt"
 
 //
@@ -122,7 +123,7 @@ func call(srv string, rpcname string,
 func key2shard(key string) int {
   shard := 0
   if len(key) > 0 {
-    shard = int(key[0])
+    shard, _ = strconv.Atoi(key)
   }
   shard %= NShards
   return shard

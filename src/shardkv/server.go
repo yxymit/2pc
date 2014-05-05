@@ -88,9 +88,6 @@ func (kv *ShardKV) detectDup(op Op) (bool, interface{}) {
   _, ok := kv.txn_phase[op.Txn_id]
 
   if !ok {
-    if op.Type != Lock {
-      log.Fatal("Not exist in txn_phase")
-    }
     return false, nil
   }
 

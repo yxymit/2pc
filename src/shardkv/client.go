@@ -21,13 +21,14 @@ type Clerk struct {
 }
 
 type CurTxn struct { 
-  txnid int
-  txns map[int64]*TxnArgs // txns[group_id] -> TxnArgs
-  phase string // "Started", "Locked", "Prepared", "Done"
-  prepare_ok bool
+  Txnid int
+  Txns map[int64]*TxnArgs // txns[group_id] -> TxnArgs
+  Phase string // "Started", "Locked", "Prepared", "Done"
+  Prepare_ok bool
 }
 
 func MakeClerk(me int, groups map[int64][]string) *Clerk {
+  gob.Register(CurTxn{}) 
   ck := new(Clerk)
   ck.groups = groups
   ck.gids = make([]int64, len(groups))
@@ -40,11 +41,17 @@ func MakeClerk(me int, groups map[int64][]string) *Clerk {
   ck.me = me
   ck.rpcid = 0
 
-  if ck.LoadState() {
-    ck.txnid = ck.curtxn.txnid
-    ck.runCurTxn("")
-  }
   return ck
+}
+
+func (ck *Clerk) Reboot() (bool, []ReqReply) {
+  if ck.LoadState() {
+    ck.txnid = ck.curtxn.Txnid
+    return ck.runCurTxn("")
+  } else {
+    log.Fatal("cannot read client's state")
+    return false, nil
+  }
 }
 
 // statically map a shard to a group
@@ -134,8 +141,16 @@ func (ck *Clerk) MakePersistent() {
   }
   buf := new(bytes.Buffer)
   enc := gob.NewEncoder(buf)
-  enc.Encode(ck.curtxn)
-  f.Write(buf.Bytes())
+  err = enc.Encode(ck.curtxn)
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  _, e := f.Write(buf.Bytes())
+  if e != nil {
+    log.Fatal(err)
+  }
+
   f.Close()
 }
 //
@@ -163,17 +178,17 @@ func (ck *Clerk) RunTxn(reqs []ReqArgs, failpoint string) (bool, []ReqReply) {
   // 
   // assign the requests to their corresponding groups
   ck.curtxn = new(CurTxn)
-  ck.curtxn.txnid = ck.txnid
-  ck.curtxn.phase = "Started"
-  ck.curtxn.txns = make(map[int64]*TxnArgs)
+  ck.curtxn.Txnid = ck.txnid
+  ck.curtxn.Phase = "Started"
+  ck.curtxn.Txns = make(map[int64]*TxnArgs)
   for _, req := range reqs {
     gid := ck.shard2group( key2shard(req.Key) )
-    _, ok := ck.curtxn.txns[gid]
+    _, ok := ck.curtxn.Txns[gid]
     if !ok {
-      ck.curtxn.txns[gid] = new(TxnArgs)
-      ck.curtxn.txns[gid].Txn_id = ck.txnid
+      ck.curtxn.Txns[gid] = new(TxnArgs)
+      ck.curtxn.Txns[gid].Txn_id = ck.txnid
     } 
-    ck.curtxn.txns[gid].Txn = append(ck.curtxn.txns[gid].Txn, req)
+    ck.curtxn.Txns[gid].Txn = append(ck.curtxn.Txns[gid].Txn, req)
   }
   
   return ck.runCurTxn(failpoint)
@@ -182,11 +197,11 @@ func (ck *Clerk) RunTxn(reqs []ReqArgs, failpoint string) (bool, []ReqReply) {
 func (ck *Clerk) runCurTxn(failpoint string) (bool, []ReqReply) {
   // 
   // send out the lock requests
-  DPrintfCLR(1, "[Clerk.runCurTxn] Will run txn %d. phase=%v", ck.curtxn.txnid, ck.curtxn.phase) 
+  DPrintfCLR(1, "[Clerk.runCurTxn] Will run txn %d. phase=%v", ck.curtxn.Txnid, ck.curtxn.Phase) 
   
-  if ck.curtxn.phase == "Started" {
-    ck.LockGroups(ck.curtxn.txns)
-    ck.curtxn.phase = "Locked"
+  if ck.curtxn.Phase == "Started" {
+    ck.LockGroups(ck.curtxn.Txns)
+    ck.curtxn.Phase = "Locked"
     if Persistent {
       ck.MakePersistent()
     }
@@ -196,13 +211,13 @@ func (ck *Clerk) runCurTxn(failpoint string) (bool, []ReqReply) {
   
   var prepare_ok bool
   var results []ReqReply
-  if ck.curtxn.phase == "Locked" {
-    prepare_ok, results = ck.PrepareGroups(ck.curtxn.txns)
-    ck.curtxn.prepare_ok = prepare_ok 
+  if ck.curtxn.Phase == "Locked" {
+    prepare_ok, results = ck.PrepareGroups(ck.curtxn.Txns)
+    ck.curtxn.Prepare_ok = prepare_ok 
     if failpoint == "BeforeDiskWrite" {
       return false, nil
     }
-    ck.curtxn.phase = "Prepared"
+    ck.curtxn.Phase = "Prepared"
     if Persistent {
       ck.MakePersistent()
     }
@@ -214,8 +229,8 @@ func (ck *Clerk) runCurTxn(failpoint string) (bool, []ReqReply) {
 
   DPrintfCLR(1, "[Clerk.runCurTxn] groups prepared, start commit phase") 
   
-  if ck.curtxn.phase == "Prepared" {
-    ck.CommitGroups(ck.curtxn.txns, prepare_ok)
+  if ck.curtxn.Phase == "Prepared" {
+    ck.CommitGroups(ck.curtxn.Txns, prepare_ok)
   }
   ck.txnid += 100
   

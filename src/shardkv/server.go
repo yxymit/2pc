@@ -84,6 +84,8 @@ type ShardKV struct {
   txn_phase map[int]string // db[txn_id] -> "Locked"/"Prepared"/"Commited"
   lastReply map[int]LastReply // db[txn_id] -> Replies
 
+  persistent bool
+
   // For DEBUG
   failpoint string  // BeforePrepare, AfterPrepare, BeforeCommit, AfterCommit 
 }
@@ -223,7 +225,9 @@ func (kv *ShardKV) doCommit(op Op) {
         shard_id := key2shard(key)
         kv.db[shard_id][key] = val
         //comit to disk
-        kv.writeDisk(key,val)
+        if kv.persistent {
+          kv.writeDisk(key,val)
+        }
       case "Get":
         //do nothing
       case "Add":
@@ -232,7 +236,9 @@ func (kv *ShardKV) doCommit(op Op) {
         shard_id := key2shard(key)
         kv.db[shard_id][key] = val
         //comit to disk
-        kv.writeDisk(key,val)
+        if kv.persistent {
+          kv.writeDisk(key,val)
+        }
       }  
     }
     
@@ -274,14 +280,16 @@ func (kv *ShardKV) getPrepOp() Op {
 
     shard_id := key2shard(key)
 
-    _, ok0 := kv.db[shard_id]
-    _, ok1 := kv.db[shard_id][key]
+    if kv.persistent {
+      _, ok0 := kv.db[shard_id]
+      _, ok1 := kv.db[shard_id][key]
 		
-    if !ok0 || !ok1 {
-      filename := dirname(kv.gid,kv.me)+key
-      if _, err := os.Stat(filename); err == nil {
-        value := kv.readDisk(key)
-        kv.db[shard_id][key] = value
+      if !ok0 || !ok1 {
+        filename := dirname(kv.gid,kv.me)+key
+        if _, err := os.Stat(filename); err == nil {
+          value := kv.readDisk(key)
+          kv.db[shard_id][key] = value
+        }
       }
     }
     
@@ -428,7 +436,7 @@ func (kv *ShardKV) kill() {
 //   in this replica group.
 // Me is the index of this server in servers[].
 //
-func StartServer(gid int64, servers []string, me int, failpoint string) *ShardKV {
+func StartServer(gid int64, servers []string, me int, persistent bool, failpoint string) *ShardKV {
   gob.Register(Op{}) 
   gob.Register(ReqArgs{}) 
   gob.Register(TxnArgs{}) 
@@ -440,6 +448,7 @@ func StartServer(gid int64, servers []string, me int, failpoint string) *ShardKV
 
   kv.dblock = false
 
+
   // Your initialization code here.
   // Don't call Join().
   kv.db = make(map[int]map[string]string)
@@ -447,7 +456,11 @@ func StartServer(gid int64, servers []string, me int, failpoint string) *ShardKV
     kv.db[i] = make(map[string]string)
   }
 
-	os.MkdirAll(dirname(gid,me),os.ModeDir)
+  kv.persistent = persistent
+  
+  if kv.persistent {
+    os.MkdirAll(dirname(gid,me),os.ModeDir)
+  }
 	
   //  curr_txn []ReqArgs
 
@@ -459,7 +472,7 @@ func StartServer(gid int64, servers []string, me int, failpoint string) *ShardKV
   rpcs := rpc.NewServer()
   rpcs.Register(kv)
 
-  kv.px = paxos.MakePaxos(servers, me, rpcs, servers[me])
+  kv.px = paxos.MakePaxos(servers, me, rpcs, "gid_"+strconv.Itoa(int(gid))+"_server_"+strconv.Itoa(me), kv.persistent)
 
 
   os.Remove(servers[me])

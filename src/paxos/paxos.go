@@ -34,7 +34,7 @@ import "strconv"
 import "bytes"
 import "encoding/gob"
 
-const Persistent=false
+//const Persistent=false
 
 type Instance struct {
   // States for Proposer & learner
@@ -67,6 +67,8 @@ type Paxos struct {
   instances map[int]*Instance // seq -> Instance mapping
   maxseq int
   minseq []int  // min seq from all peers
+
+  persistent bool
 }
 
 //
@@ -235,7 +237,7 @@ func (px *Paxos) getInstance(seq int) *Instance {
     return nil
   }
   _, ok := px.instances[seq]
-  if !ok && Persistent {
+  if !ok && px.persistent {
     filename := "./paxos_log/"+px.name+"_INS"+strconv.Itoa(seq)+".txt"
     if _, err := os.Stat(filename); err == nil {
       numFile, err := os.Open(filename)
@@ -269,7 +271,7 @@ func (px *Paxos) Prepare(args *PreArgs, reply *PreReply) error {
     reply.Ok = true
     reply.Ts = ins.N_a
     reply.Value = ins.V_a
-    if Persistent {
+    if px.persistent {
       filename := "./paxos_log/"+px.name+"_INS"+strconv.Itoa(args.Seq)+".txt"
       numFile, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY, 0666)
       if err != nil {
@@ -299,7 +301,7 @@ func (px *Paxos) Accept(args *AccArgs, reply *AccReply) error {
     ins.V_a = args.Value
     reply.Ok = true
     reply.Ts = args.Ts
-    if Persistent {
+    if px.persistent {
       filename := "./paxos_log/"+px.name+"_INS"+strconv.Itoa(args.Seq)+".txt"
       numFile, _ := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY, 0666)
       buf := new(bytes.Buffer)
@@ -324,7 +326,7 @@ func (px *Paxos) Decide(args *DecArgs, reply * DecReply) error {
     ins.Decided = true
     ins.V_a = args.Value
 //    ins.Value = args.Value 
-    if Persistent {
+    if px.persistent {
       filename := "./paxos_log/"+px.name+"_INS"+strconv.Itoa(args.Seq)+".txt"
       numFile, err := os.OpenFile(filename, os.O_CREATE|os.O_WRONLY, 0666)
       if err != nil {
@@ -346,7 +348,7 @@ func (px *Paxos) Forget() {
   min := px.Min()
   for k, _ := range px.instances {
     if k < min {
-      if Persistent {
+      if px.persistent {
         filename := "./paxos_log/"+px.name+"_INS"+strconv.Itoa(k)+".txt"
         if _, err := os.Stat(filename); os.IsNotExist(err) {
           log.Fatal("Log record does not exist!")
@@ -509,9 +511,10 @@ func (px *Paxos) Kill() {
   }
 }
 
-func MakePaxos(peers []string, me int, rpcs *rpc.Server, name string) *Paxos {
+func MakePaxos(peers []string, me int, rpcs *rpc.Server, name string, persistent bool) *Paxos {
   px:= Make(peers, me, rpcs)
   px.name = name
+  px.persistent = persistent
   return px
 }
 //

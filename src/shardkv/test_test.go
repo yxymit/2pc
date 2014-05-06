@@ -92,7 +92,7 @@ func param_setup(tag string, unreliable bool, ngroups int, nreplicas int, failpo
       ha[i][j] = port(tag+"s", (i*nreplicas)+j)
     }
     for j := 0; j < nreplicas; j++ {
-      sa[i][j] = StartServer(gids[i], ha[i], j, "")
+      sa[i][j] = StartServer(gids[i], ha[i], j, true, "")
       sa[i][j].unreliable = unreliable
     }
   }
@@ -102,7 +102,7 @@ func param_setup(tag string, unreliable bool, ngroups int, nreplicas int, failpo
 
 }
 
-func setup(tag string, unreliable bool) ([]int64, [][]string, [][]*ShardKV, func(rmFiles bool)) {
+func setup(tag string, unreliable bool, persistent bool) ([]int64, [][]string, [][]*ShardKV, func(rmFiles bool)) {
   runtime.GOMAXPROCS(4)
 
   const ngroups = 3   // replica groups
@@ -119,7 +119,7 @@ func setup(tag string, unreliable bool) ([]int64, [][]string, [][]*ShardKV, func
       ha[i][j] = port(tag+"s", (i*nreplicas)+j)
     }
     for j := 0; j < nreplicas; j++ {
-      sa[i][j] = StartServer(gids[i], ha[i], j, "")
+      sa[i][j] = StartServer(gids[i], ha[i], j, persistent, "")
       sa[i][j].unreliable = unreliable
     }
   }
@@ -130,7 +130,7 @@ func setup(tag string, unreliable bool) ([]int64, [][]string, [][]*ShardKV, func
 
 
 func txnAbort(t *testing.T, unreliable bool) {
-  gids, ha, _, clean := setup("basic", unreliable)
+  gids, ha, _, clean := setup("basic", unreliable, false)
   defer clean(true)
 
   fmt.Printf("Test: Single Client. Abort should roll back.\n")
@@ -177,7 +177,7 @@ func TestTxnAbortUnreliable(t *testing.T) {
 }
 
 func txnConcurrent(t *testing.T, unreliable bool) {
-  gids, ha, _, clean := setup("basic", unreliable)
+  gids, ha, _, clean := setup("basic", unreliable, false)
   defer clean(true)
 
   fmt.Printf("Test: Three Client. Abort should roll back.\n")
@@ -274,8 +274,8 @@ func TestTxnConcurrentUnreliable(t *testing.T) {
   txnConcurrent(t, true)
 }
 
-func testDbPersistent(t *testing.T, unreliable bool) {
-	gids, ha, _, clean := setup("basic", unreliable)
+func dbPersistent(t *testing.T, unreliable bool) {
+	gids, ha, _, clean := setup("basic", unreliable, true)
   //defer clean(true)
 
   fmt.Printf("Test: Single Client. Abort should roll back.\n")
@@ -301,7 +301,7 @@ func testDbPersistent(t *testing.T, unreliable bool) {
   check(db, ck) 
   clean(false)
 
-  gids, ha, _, clean = setup("basic", unreliable)
+  gids, ha, _, clean = setup("basic", unreliable, true)
   defer clean(true)
 	
   groups = make(map[int64][]string)
@@ -316,7 +316,7 @@ func testDbPersistent(t *testing.T, unreliable bool) {
 }
 
 func TestDbPersistent(t *testing.T) {
-  testDbPersistent(t, false)
+  dbPersistent(t, false)
 }
 
 func Test2PCClientCrash(t *testing.T) {  

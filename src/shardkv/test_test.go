@@ -278,7 +278,7 @@ func dbPersistent(t *testing.T, unreliable bool) {
 	gids, ha, _, clean := setup("basic", unreliable, true)
   //defer clean(true)
 
-  fmt.Printf("Test: Single Client. Abort should roll back.\n")
+  fmt.Printf("Test: Single Client. Abort should roll back. XXXXXXXXXXXXXX\n")
   
   db := make(map[string]string)
   
@@ -288,7 +288,6 @@ func dbPersistent(t *testing.T, unreliable bool) {
   }
   ck := MakeClerk(0, groups)
   
-  // Txn 1
   reqs := make([]ReqArgs, 10)
   for i := 0; i < 10; i++ {
     reqs[i].Type = "Put"
@@ -302,7 +301,7 @@ func dbPersistent(t *testing.T, unreliable bool) {
   clean(false)
 
   gids, ha, _, clean = setup("basic", unreliable, true)
-  defer clean(true)
+  defer clean(false)
 	
   groups = make(map[int64][]string)
   for i, gid := range gids {
@@ -320,7 +319,7 @@ func TestDbPersistent(t *testing.T) {
 }
 
 func Test2PCClientCrash(t *testing.T) {  
-  gids, ha, _, clean := param_setup("basic", false, 3, 1)
+  gids, ha, _, clean := param_setup("basic", false, 3, 1, "")
   defer clean(true)
 
   fmt.Printf("Test: Different failure points for client\n")
@@ -365,7 +364,7 @@ func Test2PCClientCrash(t *testing.T) {
 }
 
 func Test2PCServerCrash(t *testing.T) {  
-  gids, ha, _, clean := param_setup("basic", false, 3, 1)
+  gids, ha, _, clean := param_setup("basic", false, 3, 1, "")
   defer clean(true)
 
   fmt.Printf("Test: Different failure points for the server\n")

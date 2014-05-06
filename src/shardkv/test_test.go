@@ -76,6 +76,32 @@ func check(db map[string]string, ck *Clerk) {
   }
 }
 
+func param_setup(tag string, unreliable bool, ngroups int, nreplicas int) ([]int64, [][]string, [][]*ShardKV, func(rmFiles bool)) {
+
+  runtime.GOMAXPROCS(4)
+
+  gids := make([]int64, ngroups)    // each group ID
+  ha := make([][]string, ngroups)   // ShardKV ports, [group][replica]
+  sa := make([][]*ShardKV, ngroups) // ShardKVs
+  // defer cleanup(sa)
+  for i := 0; i < ngroups; i++ {
+    gids[i] = int64(i + 100)
+    sa[i] = make([]*ShardKV, nreplicas)
+    ha[i] = make([]string, nreplicas)
+    for j := 0; j < nreplicas; j++ {
+      ha[i][j] = port(tag+"s", (i*nreplicas)+j)
+    }
+    for j := 0; j < nreplicas; j++ {
+      sa[i][j] = StartServer(gids[i], ha[i], j, "")
+      sa[i][j].unreliable = unreliable
+    }
+  }
+
+  clean := func(rmFiles bool) { cleanup(sa, gids, nreplicas, rmFiles) } // ; mcleanup(sma) }
+  return gids, ha, sa, clean
+
+}
+
 func setup(tag string, unreliable bool) ([]int64, [][]string, [][]*ShardKV, func(rmFiles bool)) {
   runtime.GOMAXPROCS(4)
 
@@ -110,7 +136,6 @@ func txnAbort(t *testing.T, unreliable bool) {
   fmt.Printf("Test: Single Client. Abort should roll back.\n")
   
   db := make(map[string]string)
-  
   groups := make(map[int64][]string)
   for i, gid := range gids {
     groups[gid] = ha[i]
@@ -129,7 +154,7 @@ func txnAbort(t *testing.T, unreliable bool) {
   fmt.Printf("commit=%v\nvalue=%+v\n", commit, value)
   // check results
   check(db, ck) 
-  
+
   reqs = make([]ReqArgs, 3)
   reqs[0] = ReqArgs{"Put", "1", "2"}
   reqs[1] = ReqArgs{"Add", "2", "-2"}
@@ -139,7 +164,7 @@ func txnAbort(t *testing.T, unreliable bool) {
   if commit {
     log.Fatal("Should not commit")
   }
-  
+
   check(db, ck)
   fmt.Printf("  ... Passed\n")
 }
@@ -271,8 +296,7 @@ func testDbPersistent(t *testing.T, unreliable bool) {
     reqs[i].Value = strconv.Itoa(1)
     db[ reqs[i].Key ] = reqs[i].Value
   }
-  commit, value := ck.RunTxn(reqs, "")
-  fmt.Printf("commit=%v\nvalue=%+v\n", commit, value)
+  ck.RunTxn(reqs, "")
   // check results
   check(db, ck) 
   clean(false)
@@ -292,5 +316,50 @@ func testDbPersistent(t *testing.T, unreliable bool) {
 }
 
 func TestDbPersistent(t *testing.T) {
-	testDbPersistent(t, false)
+  testDbPersistent(t, false)
+}
+
+func Test2PCFailaure(t *testing.T) {  
+  gids, ha, _, clean := param_setup("basic", false, 3, 1)
+  defer clean(true)
+
+  fmt.Printf("Test: Different failure points for client\n")
+   
+  db := make(map[string]string)
+  groups := make(map[int64][]string)
+  for i, gid := range gids {
+    groups[gid] = ha[i]
+  }
+  ck := MakeClerk(0, groups)
+
+  // initialize database
+  reqs := make([]ReqArgs, 10)
+  for i := 0; i < 10; i++ {
+    reqs[i].Type = "Put"
+    reqs[i].Key = strconv.Itoa(i)
+    reqs[i].Value = strconv.Itoa(0)
+    db[ reqs[i].Key ] = reqs[i].Value
+  }
+  ck.RunTxn(reqs, "")
+  check(db, ck) 
+
+  // run Txn 
+  reqs = make([]ReqArgs, 3)
+  for i := 0; i < 3; i++ {
+    reqs[i].Type = "Add"
+    reqs[i].Key = strconv.Itoa(i)
+    reqs[i].Value = strconv.Itoa(1)
+    db[ reqs[i].Key ] = strconv.Itoa(1)
+  }
+  commit, _ := ck.RunTxn(reqs, "BeforeDiskWrite")
+  if commit {
+    log.Fatal("should not commit if the under crash")
+  } 
+
+  commit, _ = ck.Reboot()
+  if !commit {
+    log.Fatal("txn does not commit after reboot")
+  } 
+  check(db, ck) 
+  fmt.Printf("  ... Passed\n")
 }

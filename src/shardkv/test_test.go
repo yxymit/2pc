@@ -76,7 +76,7 @@ func check(db map[string]string, ck *Clerk) {
   }
 }
 
-func param_setup(tag string, unreliable bool, ngroups int, nreplicas int) ([]int64, [][]string, [][]*ShardKV, func(rmFiles bool)) {
+func param_setup(tag string, unreliable bool, ngroups int, nreplicas int, failpoint string) ([]int64, [][]string, [][]*ShardKV, func(rmFiles bool)) {
 
   runtime.GOMAXPROCS(4)
 
@@ -319,7 +319,7 @@ func TestDbPersistent(t *testing.T) {
   testDbPersistent(t, false)
 }
 
-func Test2PCFailaure(t *testing.T) {  
+func Test2PCClientCrash(t *testing.T) {  
   gids, ha, _, clean := param_setup("basic", false, 3, 1)
   defer clean(true)
 
@@ -331,7 +331,52 @@ func Test2PCFailaure(t *testing.T) {
     groups[gid] = ha[i]
   }
   ck := MakeClerk(0, groups)
+  
+  // initialize database
+  reqs := make([]ReqArgs, 10)
+  for i := 0; i < 10; i++ {
+    reqs[i].Type = "Put"
+    reqs[i].Key = strconv.Itoa(i)
+    reqs[i].Value = strconv.Itoa(0)
+    db[ reqs[i].Key ] = reqs[i].Value
+  }
+  ck.RunTxn(reqs, "")
+  check(db, ck) 
 
+  // run Txn 
+  reqs = make([]ReqArgs, 3)
+  for i := 0; i < 3; i++ {
+    reqs[i].Type = "Add"
+    reqs[i].Key = strconv.Itoa(i)
+    reqs[i].Value = strconv.Itoa(1)
+    db[ reqs[i].Key ] = strconv.Itoa(1)
+  }
+  commit, _ := ck.RunTxn(reqs, "BeforeDiskWrite")
+  if commit {
+    log.Fatal("should not commit if the under crash")
+  } 
+
+  commit, _ = ck.Reboot()
+  if !commit {
+    log.Fatal("txn does not commit after reboot")
+  } 
+  check(db, ck) 
+  fmt.Printf("  ... Passed\n")
+}
+
+func Test2PCServerCrash(t *testing.T) {  
+  gids, ha, _, clean := param_setup("basic", false, 3, 1)
+  defer clean(true)
+
+  fmt.Printf("Test: Different failure points for the server\n")
+   
+  db := make(map[string]string)
+  groups := make(map[int64][]string)
+  for i, gid := range gids {
+    groups[gid] = ha[i]
+  }
+  ck := MakeClerk(0, groups)
+  
   // initialize database
   reqs := make([]ReqArgs, 10)
   for i := 0; i < 10; i++ {

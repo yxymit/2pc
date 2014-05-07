@@ -67,7 +67,7 @@ type ShardKV struct {
   dead bool // for testing
   unreliable bool // for testing
   px *paxos.Paxos
-
+  servers []string
   gid int64 // my replica group ID
 
   // Your definitions here.
@@ -427,6 +427,33 @@ func (kv *ShardKV) kill() {
   kv.px.Kill()
 }
 
+func (kv *ShardKV) Reboot() {
+  if !kv.dead {
+    log.Fatal("The server was not dead when reboot.")
+  }
+  kv.dead = false
+  kv.db = make(map[int]map[string]string)
+  for i := 0; i < NShards; i++ {
+    kv.db[i] = make(map[string]string)
+  }
+  
+  kv.txn_phase = make(map[int]string)
+  kv.lastReply = make(map[int]LastReply)
+
+  rpcs := rpc.NewServer()
+  rpcs.Register(kv)
+
+  kv.px.Reboot()
+
+  os.Remove(kv.servers[kv.me])
+  l, e := net.Listen("unix", kv.servers[kv.me]);
+  if e != nil {
+    log.Fatal("listen error: ", e);
+  }
+  kv.l = l
+
+}
+
 //
 // Start a shardkv server.
 // gid is the ID of the server's replica group.
@@ -441,8 +468,8 @@ func StartServer(gid int64, servers []string, me int, persistent bool, failpoint
   gob.Register(ReqArgs{}) 
   gob.Register(TxnArgs{}) 
   gob.Register(make(map[int]map[string]string))
-  
   kv := new(ShardKV)
+  kv.servers = servers 
   kv.me = me
   kv.gid = gid
 

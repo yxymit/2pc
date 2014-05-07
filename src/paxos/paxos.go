@@ -511,6 +511,22 @@ func (px *Paxos) Kill() {
   }
 }
 
+func (px *Paxos) Reboot() {
+  px.dead = false
+  os.Remove(px.peers[px.me]) // only needed for "unix"
+  l, e := net.Listen("unix", px.peers[px.me]);
+  if e != nil {
+    log.Fatal("listen error: ", e);
+  }
+  px.l = l
+  px.instances = make(map[int]*Instance)
+  px.maxseq = 0
+  px.minseq = make([]int, len(px.peers))
+  for i := range px.minseq {
+    px.minseq[i] = -1
+  }
+}
+
 func MakePaxos(peers []string, me int, rpcs *rpc.Server, name string, persistent bool) *Paxos {
   px:= Make(peers, me, rpcs)
   px.name = name
@@ -523,6 +539,7 @@ func MakePaxos(peers []string, me int, rpcs *rpc.Server, name string, persistent
 // are in peers[]. this servers port is peers[me].
 //
 func Make(peers []string, me int, rpcs *rpc.Server) *Paxos {
+  os.Mkdir("paxos_log", 0666)
   px := &Paxos{}
   px.peers = peers
   px.me = me

@@ -28,6 +28,7 @@ type CurTxn struct {
 }
 
 func MakeClerk(me int, groups map[int64][]string) *Clerk {
+  os.Mkdir("client_persistent", 0666)
   gob.Register(CurTxn{}) 
   ck := new(Clerk)
   ck.groups = groups

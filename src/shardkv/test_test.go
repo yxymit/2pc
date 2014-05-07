@@ -4,7 +4,7 @@ import "testing"
 import "runtime"
 import "strconv"
 import "os"
-//import "time"
+import "time"
 import "fmt"
 import "log"
 //import "sync"
@@ -46,6 +46,13 @@ func cleanup(sa [][]*ShardKV, gid []int64, nreplicas int, rmFiles bool) {
         }
       }
     }
+    if err := os.RemoveAll("client_persistent"); err != nil {
+      log.Fatal("RemoveDirs Failed")
+    }
+    if err := os.RemoveAll("paxos_log"); err != nil {
+      log.Fatal("RemoveDirs Failed")
+    }
+
   }
 }
 
@@ -66,11 +73,11 @@ func check(db map[string]string, ck *Clerk) {
     log.Fatal("results length is not correct")
   }
 
-  fmt.Printf("db = %+v\n reply = %+v\n", db, results)
   for _, req_reply := range results {
     key := req_reply.Key
     value := req_reply.Value
     if value != db[key] {
+      fmt.Printf("db = %+v\n reply = %+v\n", db, results)
       log.Fatal("value does not match")
     }
   }
@@ -92,7 +99,11 @@ func param_setup(tag string, unreliable bool, ngroups int, nreplicas int, failpo
       ha[i][j] = port(tag+"s", (i*nreplicas)+j)
     }
     for j := 0; j < nreplicas; j++ {
-      sa[i][j] = StartServer(gids[i], ha[i], j, true, "")
+      if i == 0 {
+        sa[i][j] = StartServer(gids[i], ha[i], j, true, failpoint)
+      } else {
+        sa[i][j] = StartServer(gids[i], ha[i], j, true, "")
+      }
       sa[i][j].unreliable = unreliable
     }
   }
@@ -147,7 +158,7 @@ func txnAbort(t *testing.T, unreliable bool) {
   for i := 0; i < 10; i++ {
     reqs[i].Type = "Put"
     reqs[i].Key = strconv.Itoa(i)
-    reqs[i].Value = strconv.Itoa(1)
+    reqs[i].Value = strconv.Itoa(2)
     db[ reqs[i].Key ] = reqs[i].Value
   }
   commit, value := ck.RunTxn(reqs, "")
@@ -157,7 +168,7 @@ func txnAbort(t *testing.T, unreliable bool) {
 
   reqs = make([]ReqArgs, 3)
   reqs[0] = ReqArgs{"Put", "1", "2"}
-  reqs[1] = ReqArgs{"Add", "2", "-2"}
+  reqs[1] = ReqArgs{"Add", "2", "-3"}
   reqs[2] = ReqArgs{"Put", "3", "2"}
   commit, value = ck.RunTxn(reqs, "")
 
@@ -301,7 +312,7 @@ func dbPersistent(t *testing.T, unreliable bool) {
   clean(false)
 
   gids, ha, _, clean = setup("basic", unreliable, true)
-  defer clean(false)
+  defer clean(true)
 	
   groups = make(map[int64][]string)
   for i, gid := range gids {
@@ -319,6 +330,8 @@ func TestDbPersistent(t *testing.T) {
 }
 
 func Test2PCClientCrash(t *testing.T) {  
+
+//  gids, ha, _, clean := setup("basic", false, false)
   gids, ha, _, clean := param_setup("basic", false, 3, 1, "")
   defer clean(true)
 
@@ -336,7 +349,7 @@ func Test2PCClientCrash(t *testing.T) {
   for i := 0; i < 10; i++ {
     reqs[i].Type = "Put"
     reqs[i].Key = strconv.Itoa(i)
-    reqs[i].Value = strconv.Itoa(0)
+    reqs[i].Value = strconv.Itoa(2)
     db[ reqs[i].Key ] = reqs[i].Value
   }
   ck.RunTxn(reqs, "")
@@ -345,10 +358,10 @@ func Test2PCClientCrash(t *testing.T) {
   // run Txn 
   reqs = make([]ReqArgs, 3)
   for i := 0; i < 3; i++ {
-    reqs[i].Type = "Add"
+    reqs[i].Type = "Put"
     reqs[i].Key = strconv.Itoa(i)
     reqs[i].Value = strconv.Itoa(1)
-    db[ reqs[i].Key ] = strconv.Itoa(1)
+    db[ reqs[i].Key ] = reqs[i].Value
   }
   commit, _ := ck.RunTxn(reqs, "BeforeDiskWrite")
   if commit {
@@ -363,11 +376,11 @@ func Test2PCClientCrash(t *testing.T) {
   fmt.Printf("  ... Passed\n")
 }
 
-func Test2PCServerCrash(t *testing.T) {  
-  gids, ha, _, clean := param_setup("basic", false, 3, 1, "")
+func serverCrash(t *testing.T, failpoint string) {
+  gids, ha, sa, clean := param_setup("basic", false, 3, 1, failpoint)
   defer clean(true)
 
-  fmt.Printf("Test: Different failure points for the server\n")
+  fmt.Printf("Test: server fails at %s\n", failpoint)
    
   db := make(map[string]string)
   groups := make(map[int64][]string)
@@ -384,26 +397,35 @@ func Test2PCServerCrash(t *testing.T) {
     reqs[i].Value = strconv.Itoa(0)
     db[ reqs[i].Key ] = reqs[i].Value
   }
-  ck.RunTxn(reqs, "")
-  check(db, ck) 
-
-  // run Txn 
-  reqs = make([]ReqArgs, 3)
-  for i := 0; i < 3; i++ {
-    reqs[i].Type = "Add"
-    reqs[i].Key = strconv.Itoa(i)
-    reqs[i].Value = strconv.Itoa(1)
-    db[ reqs[i].Key ] = strconv.Itoa(1)
+  commit_chan := make(chan bool)
+  go func() {
+    commit, _ := ck.RunTxn(reqs, "")
+    commit_chan <- commit
+  }()
+  restart := false
+  sleep_cnt := 0
+  select {
+  case commit := <-commit_chan :
+    if restart == false {
+      log.Fatal("server failed. the client should not commit.")
+    }
+    if !commit {
+      log.Fatal("commit failed")
+    }
+  default:
+    time.Sleep(100 * time.Millisecond)
+    sleep_cnt ++
+    if sleep_cnt >= 10 {
+      restart = true
+      sa[0][0].Reboot()
+    }
   }
-  commit, _ := ck.RunTxn(reqs, "BeforeDiskWrite")
-  if commit {
-    log.Fatal("should not commit if the under crash")
-  } 
-
-  commit, _ = ck.Reboot()
-  if !commit {
-    log.Fatal("txn does not commit after reboot")
-  } 
   check(db, ck) 
-  fmt.Printf("  ... Passed\n")
+}
+
+func Test2PCServerCrash(t *testing.T) {  
+  serverCrash(t, "BeforePrepare")
+  serverCrash(t, "AfterPrepare")
+  serverCrash(t, "BeforeCommit")
+  serverCrash(t, "AfterCommit")
 }

@@ -8,7 +8,7 @@ import "time"
 import "fmt"
 import "log"
 //import "sync"
-//import "math/rand"
+import "math/rand"
 
 func port(tag string, host int) string {
   s := "/var/tmp/824-"
@@ -83,7 +83,7 @@ func check(db map[string]string, ck *Clerk) {
   }
 }
 
-func param_setup(tag string, unreliable bool, ngroups int, nreplicas int, failpoint string) ([]int64, [][]string, [][]*ShardKV, func(rmFiles bool)) {
+func param_setup(tag string, unreliable bool, ngroups int, nreplicas int, failpoint string, persistent bool) ([]int64, [][]string, [][]*ShardKV, func(rmFiles bool)) {
 
   runtime.GOMAXPROCS(4)
 
@@ -100,9 +100,9 @@ func param_setup(tag string, unreliable bool, ngroups int, nreplicas int, failpo
     }
     for j := 0; j < nreplicas; j++ {
       if i == 0 {
-        sa[i][j] = StartServer(gids[i], ha[i], j, true, failpoint)
+        sa[i][j] = StartServer(gids[i], ha[i], j, persistent, failpoint)
       } else {
-        sa[i][j] = StartServer(gids[i], ha[i], j, true, "")
+        sa[i][j] = StartServer(gids[i], ha[i], j, persistent, "")
       }
       sa[i][j].unreliable = unreliable
     }
@@ -139,6 +139,44 @@ func setup(tag string, unreliable bool, persistent bool) ([]int64, [][]string, [
   return gids, ha, sa, clean
 }
 
+// nGroups -- number of groups in the server cluster
+// txnLen  -- length of transcation to be generated
+// reqDist -- relative number of reqs on a given group, reqDist[gid]/sum(reqDist[]) = % of reqs on gid
+// rPerc -- read percentage, e.g 100% all gets, 0% all puts, 50% half gets, half puts
+func genTxn(nGroups int, txnLen int, reqDistr []int, rPerc float32) []ReqArgs {
+  retval := make([]ReqArgs, txnLen)
+  
+  sum := 0;
+
+  if ( len(reqDistr) != nGroups ){
+    log.Fatalf("Length of reqDistr should be equal to nGroups\n");
+  }
+  
+  for i := 0; i < nGroups; i++ {
+    sum+=reqDistr[i]
+  }
+
+  gid := 0
+
+  for i := 0; i < txnLen; i++ {
+    if i > reqDistr[gid]*txnLen/sum + gid {
+      gid++
+    }
+    
+    if rand.Int63() % 1000 < int64(rPerc*1000) {
+      // generate a get
+      retval[i].Type = "Get"
+      retval[i].Key = strconv.Itoa(gid)
+    } else {
+      // generate a put
+      retval[i].Type = "Put"
+      retval[i].Key = strconv.Itoa(gid)
+      retval[i].Value = strconv.Itoa(rand.Int())
+    }
+  }
+
+  return retval
+}
 
 func txnAbort(t *testing.T, unreliable bool) {
   gids, ha, _, clean := setup("basic", unreliable, false)
@@ -289,7 +327,7 @@ func dbPersistent(t *testing.T, unreliable bool) {
 	gids, ha, _, clean := setup("basic", unreliable, true)
   //defer clean(true)
 
-  fmt.Printf("Test: Single Client. Abort should roll back. XXXXXXXXXXXXXX\n")
+  fmt.Printf("Test: Single Client. All results should comitted to persistent storage\n")
   
   db := make(map[string]string)
   
@@ -331,12 +369,12 @@ func TestDbPersistent(t *testing.T) {
 
 func Test2PCClientCrash(t *testing.T) {  
 
-//  gids, ha, _, clean := setup("basic", false, false)
-  gids, ha, _, clean := param_setup("basic", false, 3, 1, "")
+  //  gids, ha, _, clean := setup("basic", false, false)
+  gids, ha, _, clean := param_setup("basic", false, 3, 1, "", true)
   defer clean(true)
 
   fmt.Printf("Test: Different failure points for client\n")
-   
+  
   db := make(map[string]string)
   groups := make(map[int64][]string)
   for i, gid := range gids {
@@ -377,11 +415,11 @@ func Test2PCClientCrash(t *testing.T) {
 }
 
 func serverCrash(t *testing.T, failpoint string) {
-  gids, ha, sa, clean := param_setup("basic", false, 3, 1, failpoint)
+  gids, ha, sa, clean := param_setup("basic", false, 3, 1, failpoint, true)
   defer clean(true)
 
   fmt.Printf("Test: server fails at %s\n", failpoint)
-   
+  
   db := make(map[string]string)
   groups := make(map[int64][]string)
   for i, gid := range gids {
@@ -428,4 +466,89 @@ func Test2PCServerCrash(t *testing.T) {
   serverCrash(t, "AfterPrepare")
   serverCrash(t, "BeforeCommit")
   serverCrash(t, "AfterCommit")
+}
+
+
+func performance(t *testing.T, nGroups int, nReplicas int, reqDistr [][]int, rPerc float32, txnLen int, nTxns int, persistent bool) {
+
+  
+  gids, ha, _, clean := param_setup("basic", false, 3, 1, "", persistent)
+  defer clean(persistent)
+ 
+  NCli := len(reqDistr)
+
+  fmt.Printf("Performance Benchmark: \n")
+  fmt.Printf("Number of Groups = %d\n", nGroups)
+  fmt.Printf("Number of Replicas per Group = %d\n", nReplicas)
+  fmt.Printf("Number of Clients = %d\n", NCli)
+  fmt.Printf("Number of Txns per Client = %d\n", nTxns)
+  fmt.Printf("Length of Txns = %d\n", txnLen)
+  fmt.Printf("Read Percentage = %+v%%\n", rPerc * 100)
+
+  groups := make(map[int64][]string)
+  for i, gid := range gids {
+    groups[gid] = ha[i]
+  }
+
+  ck := make([]*Clerk, NCli)
+  for i := 0; i < NCli; i++ {
+    ck[i] = MakeClerk(i, groups);
+  }
+
+  txns := make([][]ReqArgs, NCli)
+  
+  for i := 0; i < NCli; i++ {
+    fmt.Printf("Client[%d] Request Distribution: %+v\n", i, reqDistr[i])
+    txns[i] = genTxn(nGroups, txnLen, reqDistr[i], rPerc)
+  }
+  
+  ca := make([]chan bool, NCli)
+  
+  start := time.Now()
+  for cli := 0; cli < NCli; cli++ {
+    ca[cli] = make(chan bool)
+    go func(me int) {
+      defer func() {ca[me] <- true}()
+      for iter := 0; iter < nTxns; iter++ {
+        ok, _ := ck[me].RunTxn(txns[me], "")
+        if !ok {
+          log.Fatalf("[Performance] Should not abort\n")
+        }
+      }        
+    }(cli)
+  }
+  
+  for i := 0; i < NCli; i++ {
+    <- ca[i]
+  }
+
+  timediff := time.Since(start)
+  
+  fmt.Printf("Time elasped: %+v\n", timediff)
+  fmt.Printf("Txns per second: %+v, Reqs per Txn = %d\n", nTxns*NCli/int(timediff.Seconds()), txnLen)
+  fmt.Printf("Reqs per second: %d\n", nTxns*txnLen*NCli/int(timediff.Seconds()))
+  
+  fmt.Printf("  ... Passed\n")
+  
+  
+}
+  
+
+func TestPerformance(t *testing.T) {
+  fmt.Printf("Performance 0: single client accessing to a single group\n")
+  reqDistr := make([][]int, 1)
+  reqDistr_item := make([]int,3)
+  reqDistr_item[0] = 1;
+  reqDistr_item[1] = 0;
+  reqDistr_item[2] = 0;
+  reqDistr[0] = reqDistr_item
+  performance(t, 3, 3, reqDistr, 0.5, 6, 20, false)
+
+  fmt.Printf("Performance 1: single client accessing to all groups\n")
+  reqDistr_item[0] = 1;
+  reqDistr_item[1] = 1;
+  reqDistr_item[2] = 1;
+  reqDistr[0] = reqDistr_item
+  performance(t, 3, 3, reqDistr, 0.5, 6, 20, false)
+
 }

@@ -17,7 +17,7 @@ import "strconv"
 //import "bufio"
 import "io/ioutil"
 
-const Debug=1
+const Debug=0
 const CLR_0 = "\x1b[30;1m"
 const CLR_R = "\x1b[31;1m"
 const CLR_G = "\x1b[32;1m"
@@ -206,7 +206,8 @@ func (kv *ShardKV) writeDisk(key string, value string) {
 
 func (kv *ShardKV) doCommit(op Op) {
   if !kv.dblock || kv.txn_id != op.Txn_id {
-    log.Fatal("[doPrep] Shit! Not locked by me")
+//    log.Printf("dblock=%v. kv.txnid=%d, op.txnid=%d\n", kv.dblock, kv.txn_id, op.Txn_id)
+    log.Fatal("[doCommit] Shit! Not locked by me")
   }
   
   if !op.Commit {

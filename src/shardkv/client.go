@@ -113,11 +113,11 @@ func (ck *Clerk) PrepareGroups(txns map[int64]*TxnArgs) (bool, []ReqReply) {
   return prepare_ok, results
 }
 
-func (ck *Clerk) CommitGroups(txns map[int64]*TxnArgs, prepare_ok bool) {
+func (ck *Clerk) CommitGroups(txnid int, txns map[int64]*TxnArgs, prepare_ok bool) {
   for _, gid := range ck.gids {
     _, ok := txns[gid]
     if ok {
-      args := CommitArgs{ck.txnid, prepare_ok, 0, ck.me}
+      args := CommitArgs{txnid, prepare_ok, 0, ck.me}
       var reply CommitReply
       committed := false
       for !committed {
@@ -229,11 +229,12 @@ func (ck *Clerk) runCurTxn(failpoint string) (bool, []ReqReply) {
   }
 
   DPrintfCLR(1, "[Clerk.runCurTxn] groups prepared, start commit phase") 
-  
+   
   if ck.curtxn.Phase == "Prepared" {
-    ck.CommitGroups(ck.curtxn.Txns, prepare_ok)
+    go func(txns map[int64]*TxnArgs, txnid int){
+      ck.CommitGroups(txnid, txns, prepare_ok)
+    }(ck.curtxn.Txns, ck.txnid)
   }
   ck.txnid += 100
-  
   return prepare_ok, results
 }

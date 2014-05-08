@@ -158,9 +158,12 @@ func genTxn(nGroups int, txnLen int, reqDistr []int, rPerc float32) []ReqArgs {
 
   gid := 0
 
+  txn_offset := 0
+
   for i := 0; i < txnLen; i++ {
-    if i > reqDistr[gid]*txnLen/sum + gid {
+    if i >= reqDistr[gid]*txnLen/sum + txn_offset {
       gid++
+      txn_offset = i
     }
     
     if rand.Int63() % 1000 < int64(rPerc*1000) {
@@ -502,6 +505,7 @@ func performance(t *testing.T, nGroups int, nReplicas int, reqDistr [][]int, rPe
     txns[i] = genTxn(nGroups, txnLen, reqDistr[i], rPerc)
   }
   
+  fmt.Println(txns)
   ca := make([]chan bool, NCli)
   
   start := time.Now()
@@ -525,8 +529,8 @@ func performance(t *testing.T, nGroups int, nReplicas int, reqDistr [][]int, rPe
   timediff := time.Since(start)
   
   fmt.Printf("Time elasped: %+v\n", timediff)
-  fmt.Printf("Txns per second: %+v, Reqs per Txn = %d\n", nTxns*NCli/int(timediff.Seconds()), txnLen)
-  fmt.Printf("Reqs per second: %d\n", nTxns*txnLen*NCli/int(timediff.Seconds()))
+  fmt.Printf("Txns per second: %.2f, Reqs per Txn = %d\n", float64(nTxns*NCli)/timediff.Seconds(), txnLen)
+  fmt.Printf("Reqs per second: %.2f\n", float64(nTxns*txnLen*NCli)/timediff.Seconds())
   
   fmt.Printf("  ... Passed\n")
   
@@ -592,5 +596,8 @@ func TestPerformance(t *testing.T) {
 
 
   performance(t, 3, 3, reqDistr, 0.5, 6, 20, false)
+
+  performance(t, 3, 1, reqDistr, 0.5, 6, 20, true)
+  //performance(t, 3, 1, reqDistr, 0.5, 6, 20, false)
 
 }

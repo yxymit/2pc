@@ -551,4 +551,46 @@ func TestPerformance(t *testing.T) {
   reqDistr[0] = reqDistr_item
   performance(t, 3, 3, reqDistr, 0.5, 6, 20, false)
 
+  fmt.Printf("Performance 2: Three client accessing to all groups\n")
+  reqDistr = make([][]int, 3)
+  
+  reqDistr[0] = make([]int, 3)
+  reqDistr[0][0] = 1;
+  reqDistr[0][1] = 1;
+  reqDistr[0][2] = 1;
+
+  reqDistr[1] = make([]int, 3)
+  reqDistr[1][0] = 1;
+  reqDistr[1][1] = 1;
+  reqDistr[1][2] = 1;
+
+  reqDistr[2] = make([]int, 3)
+  reqDistr[2][0] = 1;
+  reqDistr[2][1] = 1;
+  reqDistr[2][2] = 1;
+
+
+  performance(t, 3, 3, reqDistr, 0.5, 6, 20, false)
+
+  fmt.Printf("Performance 2: Three client accessing to different groups\n")
+  reqDistr = make([][]int, 3)
+  
+  reqDistr[0] = make([]int, 3)
+  reqDistr[0][0] = 1;
+  reqDistr[0][1] = 0;
+  reqDistr[0][2] = 0;
+
+  reqDistr[1] = make([]int, 3)
+  reqDistr[1][0] = 0;
+  reqDistr[1][1] = 1;
+  reqDistr[1][2] = 0;
+
+  reqDistr[2] = make([]int, 3)
+  reqDistr[2][0] = 0;
+  reqDistr[2][1] = 0;
+  reqDistr[2][2] = 1;
+
+
+  performance(t, 3, 3, reqDistr, 0.5, 6, 20, false)
+
 }

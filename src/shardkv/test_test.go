@@ -159,21 +159,30 @@ func genTxn(nGroups int, txnLen int, reqDistr []int, rPerc float32) []ReqArgs {
   gid := 0
 
   txn_offset := 0
-
   for i := 0; i < txnLen; i++ {
     if i >= reqDistr[gid]*txnLen/sum + txn_offset {
       gid++
       txn_offset = i
     }
-    
+    dup := true
+    var key int
+    for dup {
+      dup = false
+      key = gid + int(rand.Int31()) % 1000 * nGroups
+      for _, v := range retval {
+        if v.Key == strconv.Itoa(key) {
+          dup = true
+          break
+        }
+      }
+    }
+    retval[i].Key = strconv.Itoa(key)
     if rand.Int63() % 1000 < int64(rPerc*1000) {
       // generate a get
       retval[i].Type = "Get"
-      retval[i].Key = strconv.Itoa(gid)
     } else {
       // generate a put
       retval[i].Type = "Put"
-      retval[i].Key = strconv.Itoa(gid)
       retval[i].Value = strconv.Itoa(rand.Int())
     }
   }

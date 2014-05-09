@@ -268,11 +268,7 @@ func (kv *ShardKV) doCommit(op Op) {
 
       _, ok := kv.db[shard_id][key]
       if !ok {
-        kv.db[shard_id][key] = new(Row)
-        kv.db[shard_id][key].init()
-        if kv.per_row_lock {
-          kv.db[shard_id][key].lock(theop.Type, op.Txn_id)
-        }
+        log.Fatal("The row does not exist")
       }
 
       switch theop.Type {
@@ -309,6 +305,16 @@ func (kv *ShardKV) doCommit(op Op) {
 }
 
 func (kv *ShardKV) canLock(txnid int, reqs []ReqArgs) bool {
+  for _, req := range reqs {
+    shard_id := key2shard(req.Key)
+    row, ok := kv.db[shard_id][req.Key]
+    if !ok {
+      row = new(Row)
+      kv.db[shard_id][req.Key] = row
+      row.init()
+    }
+  }
+
   if !kv.per_row_lock {
     if kv.dblock && kv.txn_id != txnid {
       return false
@@ -316,8 +322,7 @@ func (kv *ShardKV) canLock(txnid int, reqs []ReqArgs) bool {
   } else {
     for _, req := range reqs {
       shard_id := key2shard(req.Key)
-      row, ok := kv.db[shard_id][req.Key]
-      if ok && row.conflict(req.Type) {
+      if kv.db[shard_id][req.Key].conflict(req.Type) {
         return false
       }
     }
@@ -336,7 +341,7 @@ func (kv *ShardKV) Insert_txn(args *TxnArgs, reply *TxnReply) error {
     reply.Err = val.(TxnReply).Err
     return nil
   }
-
+  DPrintfCLR(4, "TxnArgs=%+v", args)
   if !kv.canLock(args.Txn_id, args.Txn) {
     reply.Err = ErrNoLock
     return nil
@@ -556,7 +561,7 @@ func StartServer(gid int64, servers []string, me int, persistent bool, failpoint
   kv.me = me
   kv.gid = gid
 
-  kv.per_row_lock = false
+  kv.per_row_lock = true
   kv.dblock = false
 
 

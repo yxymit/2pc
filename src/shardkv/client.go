@@ -228,7 +228,7 @@ func (ck *Clerk) runCurTxn(failpoint string) (bool, []ReqReply) {
     return false, nil
   }
 
-  DPrintfCLR(1, "[Clerk.runCurTxn] groups prepared, start commit phase") 
+  DPrintfCLR(1, "[Clerk.runCurTxn] groups prepared %v, start commit phase", prepare_ok) 
    
   if ck.curtxn.Phase == "Prepared" {
     go func(txns map[int64]*TxnArgs, txnid int){

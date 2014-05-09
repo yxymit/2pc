@@ -219,6 +219,7 @@ func txnAbort(t *testing.T, unreliable bool) {
 
   check(db, ck)
   fmt.Printf("  ... Passed\n")
+  time.Sleep( 2*time.Second )
 }
 
 func TestTxnAbort(t *testing.T) {
@@ -317,6 +318,7 @@ func txnConcurrent(t *testing.T, unreliable bool) {
     }
   }
   fmt.Printf("  ... Passed\n")
+  time.Sleep(2*time.Second)
 }
 
 func TestTxnConcurrent(t *testing.T) {
@@ -364,6 +366,7 @@ func dbPersistent(t *testing.T, unreliable bool) {
   check(db, ck)
   
   fmt.Printf("  ... Passed\n")
+  time.Sleep(time.Second)
 }
 
 func TestDbPersistent(t *testing.T) {
@@ -415,6 +418,7 @@ func Test2PCClientCrash(t *testing.T) {
   } 
   check(db, ck) 
   fmt.Printf("  ... Passed\n")
+  time.Sleep(2*time.Second)
 }
 
 func serverCrash(t *testing.T, failpoint string) {
@@ -462,6 +466,7 @@ func serverCrash(t *testing.T, failpoint string) {
     }
   }
   check(db, ck) 
+  time.Sleep(time.Second)
 }
 
 func Test2PCServerCrash(t *testing.T) {  
@@ -534,7 +539,7 @@ func performance(t *testing.T, nGroups int, nReplicas int, reqDistr [][]int, rPe
   
   fmt.Printf("  ... Passed\n")
   
-  
+  time.Sleep( 2*time.Second )
 }
   
 

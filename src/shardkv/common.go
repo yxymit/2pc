@@ -52,7 +52,7 @@ type TxnArgs struct {
   Txn_id int
   Rpcid int
   Me int
-  Txn []ReqArgs //*list.List
+  Txn []ReqArgs
 }
 
 type TxnReply struct {

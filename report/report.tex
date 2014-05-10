@@ -13,10 +13,10 @@
 
 % ****************** TITLE ****************************************
 
-\title{Two Phase Commit on Replicated OLTP Database}
+\title{Two Phase Commit on Persistent Key Value Store with Data Replication}
 
 % possible, but not really needed or used for PVLDB:
-%\subtitle{[Extended Abstract]
+\subtitle{6.824 Distributed Systems Final Project}
 %\titlenote{A full version of this paper is available as\textit{Author's Guide to Preparing ACM SIG Proceedings Using \LaTeX$2_\epsilon$\ and BibTeX} at \texttt{www.acm.org/eaddress.htm}}}
 
 % ****************** AUTHORS **************************************
@@ -91,24 +91,24 @@ Shuotao Xu\\
 
 \begin{abstract}
   We implemented a distributed transaction processing system where data is
-  partitioned and mapped to different shards. The database model is simple key-value
-  store inherited from Lab 4. Our project is an extension of Lab 4. The objectives of
-  the project are 1) to process transaction using two phase commit and guarantee
-  atomic execution, 2) to persistently store data and server status on disk to
-  tolerate server disk failures. The operations of a transaction consist of get, put,
-  and add. To simplify implementation, the only scenario of abort of a transaction is
-  that it has an add operation that results a negative value. We first implement a
-  coarse-grained locking scheme that a transaction locks the entire group. We
-  secondly implement a fine-grained locking scheme that locks on the keys of the
-  transaction.
+  partitioned and mapped to different shards. And all shards are replicated to
+  enhance the availablity and durability of the system. The database model is simple
+  key-value store inherited from Lab 4. The objectives of the project are 1) to
+  process transaction using two phase commit and guarantee atomic execution, 2) to
+  persistently store data and server status on disk to tolerate server failures in
+  time of reboot. The operations of a transaction consist of get, put, and add. To
+  simplify implementation, the only scenario of abort of a transaction is that it has
+  an add operation that results a negative value. We first implement a coarse-grained
+  locking scheme that a transaction locks the entire group. We secondly implement a
+  fine-grained locking scheme that locks on the keys that a transaction touches.
 \end{abstract}
 
 
 
+d
+%\section{Introduction}
 
-\section{Introduction}
-
-foo
+%foo
 
 
 \section{Implementation Details}

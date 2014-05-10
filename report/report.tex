@@ -7,7 +7,7 @@
 \documentclass{vldb}
 \usepackage{graphicx}
 \usepackage{balance}  % for  \balance command ON LAST PAGE  (only there!)
-
+\usepackage{color}
 
 \begin{document}
 
@@ -121,13 +121,87 @@ foo
 
 \subsection{Two Phase Commit}
 
-\subsection{Testing Plans}
+\subsection{Testing}
+
+We implemented various test cases to make sure our implementation 
+works properly. In general, our test cases fall into two categories: 
+\textit{transaction testing} and \textit{2pc testing}. 
 
 \subsubsection{Transcation Support}
 
+This test is to make sure that our database satisfies atomicity and 
+consistency, i.e., the requirement of the notion of transaction. For 
+atomicity, we need to make sure that a transaction either completely 
+commits or completely aborts. Partial transactions are not allowed.  
+For consistency, the database should support multiple clients sending 
+requests concurrently and the results are equivalent to some order of 
+sequential execution. We designed the following two test cases 
+accordingly.
+
+\textbf{Test 1} A single client sends requests to three groups of 
+servers where each groups contains 3 servers. One of the requests
+will add a negative value to the database to make record less than 0 
+and thus should abort. The test verifies that all the changes of the 
+aborted transaction are rolled back. Both reliable and unreliable 
+networks are tested.
+
+\textbf{Test 2} Initially, each group has a record with value 10.  
+Three clients send requests to all the 3 groups to add -1 to the 
+corresponding record. Within a certain transaction, the values 
+returned from all the groups should be the same. And values returned 
+by different transactions should be different. Both reliable and 
+unreliable networks are tested.
+
 \subsubsection{Two Phase Commit}
 
+To test that our \textit{two-phase commit} protocol is correct we need 
+to manually crash the system at different point and reboot the system 
+to see if it can still run properly. A \textit{failpoint} parameter is 
+passed into both the client and the server when the transactions run.  
+When the machine(client/server) runs into the position indicated by 
+the \textit{failpoint}, the machine should delete all the information 
+stored in the main memory. The data stored on the disk, however, is 
+preserved.
+
+After faiure, the Reboot() function in either the client or the server 
+is called to recover the process. And if the system is correctly 
+implemented, all the transactions should behave properly.
+
+The following failure points are considered in the test and they are 
+tested individually.
+
+\textbf{Client Side}
+
+Case 1: Client fails after locking all the groups but before sending 
+out prepare requests.
+
+\textbf{Server Side}
+
+Case 1: Server fails before writing the prepare record to disk.
+
+Case 2: Server fails after writing the prepare record to disk but 
+before replying the to the client.
+
+Case 3: Server fails after replying the prepare state to the client.
+
+Case 4: Server fails after writing the commit record to disk but 
+before replying to the client.
+
+
 \section{Performance Results and Refinement}
+
+In this section, our system is evaluated in several different aspects.  
+In particular, we will first evaluate the overhead of disk operations 
+in our 2PC. Then we evaluate the overhead of using paxos to reach 
+consensus within a group. Finally, we evaluate the two concurrency 
+control schemes introduced in Section \textcolor{red}{XXX}.
+
+\subsection{Overhead of Disk Operations}
+
+\subsection{Overhead of Paxos}
+
+\subsection{Locking Granularity}
+
 
 \section{Discussion}
 

@@ -75,37 +75,30 @@ Shuotao Xu\\
        \affaddr{Cambridge, MA}\\
        \email{shuotao@mit.edu}
 }
-% There's nothing stopping you putting the seventh, eighth, etc.
-% author on the opening page (as the 'third row') but we ask,
-% for aesthetic reasons that you place these 'additional authors'
-% in the \additional authors block, viz.
-%\additionalauthors{Additional authors: John Smith (The Th{\o}rv\"{a}ld Group, {\texttt{jsmith@affiliation.org}}), Julius P.~Kumquat
-%(The \raggedright{Kumquat} Consortium, {\small \texttt{jpkumquat@consortium.net}}), and Ahmet Sacan (Drexel University, {\small \texttt{ahmetdevel@gmail.com}})}
-\date{30 July 1999}
-% Just remember to make sure that the TOTAL number of authors
-% is the number that will appear on the first page PLUS the
-% number that will appear in the \additionalauthors section.
 
 
 \maketitle
 
 \begin{abstract}
   We implemented a distributed transaction processing system where data is
-  partitioned and mapped to different shards. And all shards are replicated to
-  enhance the availablity and durability of the system. The database model is simple
+  partitioned and mapped to different shards. All shards are replicated to enhance
+  the availablity and durability of the system. The database model is simple
   key-value store inherited from Lab 4. The objectives of the project are 1) to
   process transaction using two phase commit and guarantee atomic execution, 2) to
   persistently store data and server status on disk to tolerate server failures in
-  time of reboot. The operations of a transaction consist of get, put, and add. To
+  time of reboot. The requests of a transaction consist of GET, PUT, and ADD. To
   simplify implementation, the only scenario of abort of a transaction is that it has
-  an add operation that results a negative value. We first implement a coarse-grained
-  locking scheme that a transaction locks the entire group. We secondly implement a
-  fine-grained locking scheme that locks on the keys that a transaction touches.
+  an add request that results a negative value. Firstly, we implemented a
+  coarse-grained locking scheme where a transcation locks the groups it
+  touches. Secondly, We implemented test cases to verify the correctness of the
+  system under different failure scenarios including unreliable networks and server
+  failures. Then we benchmarked our system with synthetic workloads that varies with
+  parameters like read/write ratios of a transcation, number of clients and so
+  on. Lastly, in order to achieve better performance gains, we refined our system
+  with a fine-grained locking scheme where a transcation locks the keys it touches.
 \end{abstract}
 
 
-
-d
 %\section{Introduction}
 
 %foo
@@ -113,13 +106,142 @@ d
 
 \section{Implementation Details}
 
-foo
+Our persistent key value store is constructed such that each key of type string is
+mapped to a value of type integer. We confined the type of values to integer to allow
+arithmetic operations on the key-value pairs. The data of our systems are partitioned
+into different shards. A group of servers are responsible for a distinct subset of
+shards, and all data within a group are replicated. Our system supports atomic
+transcation, where a transcation is an ordered group of requests such as puts, gets
+and etc. We also support persistency, where all commited transcations are recorded to
+disk. Our persistent key-value store is useful such that it could be a high
+performance inventory management system.
 
 \subsection{Transcation Support}
 
-foo
+Our system supports transcation consisting of requests of PUTs, GETs, and ADDs.
+\begin{itemize} 
+\item a PUT updates the value associated with the key
+\item a GET returns the value associated with the key
+\item an ADD adds a value (could be negative) to the previous value associated with
+  the key
+\end{itemize}
 
-\subsection{Two Phase Commit}
+In particularly, the transcation support of our system ensures the following properties. 
+
+\textbf{Consistency} Our system allows multiple clients to send transcations
+concurrently. Specifically, our database enforce seqential consistency such that the
+effects of concurrent transcations appears as some seqential order. To enable
+seqential consistency, the client should lock the groups that a transcation touches
+before execuation. And since we will have multiple servers within each group, we will
+ensure consistency inside the group with Paxos, to guarantee a global ordering of the
+operations within a group.
+
+\textbf{Atomicity} The transcations need also be atomic, i.e. either all of the
+requests of the transcation are executed or none are executed. We ensure atomicity of
+the transcation with two phase commit protocol.
+
+\textbf{Persistency} All the effects of a committed transcation on key value store
+are written on disk.
+
+\textbf{Fault-tolerant} Our system ensures the transcation processing is
+fault-tolerant. On the server sides, the Paxos implementation in Lab 3 has already
+ensured tolerance under network failures. In our project, we will modified Lab 3 such
+that Paxos can also handle server crashes. On client side, we will also record its
+transcation processing status on disk, so that after crash, the client will know at
+which point it was processing the transcation.
+
+\subsubsection{Persistent Paxos}
+
+We made the Paxos persistent so that it can tolerate server crash.
+
+Whenever any of the propose numbe(n\_p), accepted number(n\_a) and accepted value(v\_a)
+is modified, all of them are written to the file system with the file name in the
+following format: \textit{SERVERNAME\_INS\#.txt}.
+
+When the paxos log is truncated, the corresponding files are also deleted. When a
+server reboots after failure, it will reconstruct the Paxos instances by reading from
+the file system. We use a lazy reconstruction approach where an instance is read and
+reconstructed only when it is touched.
+
+Moreover, we added a new function call, Poll(seq int), to the Paxos, to peek the
+status of a Paxo instance at some sequence number. When Poll(seq int) is called, the
+paxos server first checks locally if the Paxos instance of sequence num \textit{seq}
+has been decided (by calling Status()). If not, RPCs are sent to peer servers and the
+status of the instance is returned. Note that Poll() is different from Status() since
+Status() only checks the Paxos instance on local server.
+
+Poll is used to check whether a particular instance has been decided. This simplifies
+our system implementation as explained in Section~\ref{?sec:2pc}.
+
+
+\subsubsection{Locking Scheme}
+\label{sec:lock}
+
+We uses locking to ensure seqential consistency of concurrent transcations.
+
+Transactions are initiated at the client side. A client breaks down a transcation,
+and sends the requests to a server in the corresponding group. Upon receiving the
+requests, the server will start a paxos instance to agree on the transcation. This
+paxos instance locks the whole group for the transaction.
+
+To avoid deadlocks, the clients should send requests to the groups sequentially
+following a fixed order, such as the order of increasing group IDs.
+
+To tolerate failures, we have Paxos handle failures on server side. On client side,
+when a transcation starts, the client will record its status as \textit{started} on
+disk. When all groups are properly locked, the on-disk status of the client changes
+to \textit{locked}.
+
+This is the first step of transcation processing from client's perspective, we call
+it \textit{insert transcation}.
+
+
+\subsubsection{Two Phase Commit}
+\label{sec:2pc}
+
+After client hears from all groups that the servers have been properly locked for the
+transcation, it initializes two-phase commit(2pc) protocol as described in Figure
+\ref{fig:2pc}, where the records with * are written into non-volatile storage.
+
+\begin{figure}[h!]
+  \centering
+  \includegraphics[width = 0.8\linewidth]{figures/2PC.pdf}
+  \caption{Two Phase Commit Protool}
+  \label{fig:2pc}
+\end{figure}
+
+The client will first send prepare messages to all the groups that a transcation
+involves in parallel to make sure the transcation can be executed. The servers
+pre-run the transcation. And if there is an ADD request that results negative
+interger, it responses abort. Otherwises, the server responses prepare\_ok. The
+client waits for all prepare responses from different groups. And depends on the
+prepare messages, client 1) sends out reply to application and 2) either sends out
+commit or abort message to servers. After servers sees commit, it will write the
+result of the transcation into persistent storage.
+
+As shown in Figure \ref{fig:2pc}, two-phase commit requires the coordinator(client)
+to write once to the persistent storage (commit/abort) and subordinate(servers) to
+write twice to the persistent storage (prepare\_ok/abort and commit/abort). In our
+implementation, the server always need to make consensus on those two messages
+through Paxos. Since our paxos is already persistent, two phase commit is
+automatically achieved at the server side. 
+
+At the client side, we added an extra disk operation to make the state of the current
+transaction persistent. When a client reboots, it will first read the disk for the
+latest state before it crashed and repeat the last operation if necessary. 
+
+The servers, on the other hand, should either passively wait for the client’s
+requests to insert Paxo instance. So it does not have to recover the states up to
+date immediately. We take a lazy approach to recover the servers: only replay paxos
+log and recover the states when the incoming request depends on it. For example, a
+server after reboot may receive a commit request without knowing the result of the
+transaction. It will replay the paxos log at this point and read the transaction
+results from the log and serve the commit request.
+
+The prepare and commit phases in 2pc are the second and third steps of transcation
+processing from client's perspective.
+
+
 
 \subsection{Testing}
 

@@ -199,7 +199,14 @@ experiments are carried out on the athena server at MIT.
 
 \subsection{Overhead of Paxos}
 
-In this evaluation, we assume a single client and a sergle group 
+In this evaluation, we assume a single client and a single group. In 
+the first case, the group contains only a single server which 
+processes the request alone. In the second case, the group contains 
+three servers and each request should go through the paxos consensus 
+described in Section \textcolor {red}{XXX}. The difference between the 
+performance shows the overhead of paxos protocol. 
+
+
 
 \subsection{Overhead of Disk Operations}
 

@@ -255,7 +255,7 @@ perspective, we call it \textit{insert transaction}.
 
 After client hears from all groups that the servers have been properly 
 locked for the transaction, it initializes two-phase commit(2pc) 
-protocol as described in Figure~\ref{fig:2pc}, where the records with 
+protocol\cite{mohan86} as described in \cref{fig:2pc}, where the records with 
 * are written into non-volatile storage.
 
 \begin{figure}[h!]
@@ -275,7 +275,7 @@ client 1) sends out reply to application and 2) either sends out
 commit or abort message to servers. After servers sees commit, it will 
 write the result of the transaction into persistent storage.
 
-As shown in Figure \ref{fig:2pc}, two-phase commit requires the 
+As shown in Figure \cref{fig:2pc}, two-phase commit requires the 
 coordinator(client) to write once to the persistent storage
 (commit/abort) and subordinate(servers) to write twice to the 
 persistent storage (prepare\_ok/abort and commit/abort). In our
@@ -435,20 +435,21 @@ We also implemented various test cases to verify the correctness of
 our implementation. Finally, we evaluated the performance of our 
 system and studied tradeoffs in different design decisions.
 
-From the project, we learned that Paxos is a very expensive protocol gurantee
-consistency
+From the project, we learned that Paxos is a very expensive protocol that it
+supersedes all overheads of 2pc and disk operations. In the future, optimization could
+be done on Paxos, to further increase our system's performance.
 
 %\textcolor{red}{TODO : add some thoughts? like what we learned?}
 
 \bibliographystyle{abbrv}
 \bibliography{report}  % vldb_sample.bib is the name of the 
-Bibliography in this case
+% Bibliography in this case
 % You must have a proper ".bib" file
 %  and remember to run:
 % latex bibtex latex latex
 % to resolve all references
 
-\subsection{References}
+%\subsection{References}
 
 
 

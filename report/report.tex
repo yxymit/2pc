@@ -8,6 +8,7 @@
 \usepackage{graphicx}
 \usepackage{balance}  % for  \balance command ON LAST PAGE  (only there!)
 \usepackage{color}
+\usepackage{cleveref}
 
 \begin{document}
 
@@ -199,19 +200,40 @@ experiments are carried out on the athena server at MIT.
 
 \subsection{Overhead of Paxos}
 
-In this evaluation, we assume a single client and a single group. In 
-the first case, the group contains only a single server which 
-processes the request alone. In the second case, the group contains 
-three servers and each request should go through the paxos consensus 
-described in Section \textcolor {red}{XXX}. The difference between the 
-performance shows the overhead of paxos protocol. 
+To evaluate the overhead of paxos protocol between replicas, we assume 
+a single client and a single group.  In the first case, the group 
+contains only a single server which processes the request alone.  In 
+the second case, the group contains three servers and each request 
+should go through the paxos consensus described in Section \textcolor 
+{red}{XXX}. The difference between the performance 
+(\cref{fig:paxos-persistent}) shows the overhead of paxos protocol. 
 
+\begin{figure}[t!]
+    \centering
+	\includegraphics[width=0.6\columnwidth]{figs/paxos_persistent.pdf}
+    \caption{
+		Performance overhead of paxos protocol and persistent storage.
+	}
+	\label{fig:paxos-persistent}
+\end{figure}
 
-
-\subsection{Overhead of Disk Operations}
+\cref{fig:paxos-persistent} also shows the overhead of writing the 
+records to persistent storage, thus tolerate system crashes. It turns 
+out that the disk writing overhead is smaller than the overhead of 
+paxos protocol. 
 
 \subsection{Locking Granularity}
 
+\begin{figure}[t!]
+	\centering
+	\includegraphics[width=0.6\columnwidth]{figs/locking_granularity.pdf}
+    \caption{
+		Performance comparison between different locking granularity.
+	}
+	\label{fig:locking-granularity}
+\end{figure}
+
+In \cref{fig:locking-granularity}
 
 \section{Discussion}
 

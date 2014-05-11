@@ -257,7 +257,7 @@ processing from client's perspective.
 \subsection{Testing}
 
 We implemented various test cases to make sure our implementation 
-works properly. In general, our tests fall into two categories: 
+works correctly. In general, our tests fall into two categories: 
 \textit{transaction testing} and \textit{2pc testing}. 
 
 \subsubsection{Transaction Support}
@@ -271,29 +271,26 @@ requests concurrently and the results are equivalent to some order of
 sequential execution. We designed the following test cases 
 accordingly.
 
-\textbf{Test 1} A single client sends requests to three groups of 
-servers where each groups contains 3 servers. One of the requests
-will add a negative value to the database to make record less than 0 
-and thus should abort. The test verifies that all the changes of the 
-aborted transaction are rolled back. Both reliable and unreliable 
+\textbf{Test 1} A single client sends requests to three groups of servers where each
+group contains 3 servers. One of the requests will add a negative value to the
+database to make record less than 0 and thus should abort. The test verifies that all
+the changes of the aborted transaction are rolled back. Both reliable and unreliable
 networks are tested.
 
-\textbf{Test 2} Initially, each group has a record with value 10.  
-Three clients send requests to all the 3 groups to add -1 to the 
-corresponding record. Within a certain transaction, the values 
-returned from all the groups should be the same. And values returned 
-by different transactions should be different. Both reliable and 
-unreliable networks are tested.
+\textbf{Test 2} Initially, each group has a record with value 10.  Three clients send
+requests to all the 3 groups to add -1 to the corresponding record. Within a certain
+transaction, the values returned from all the groups should be the same. And values
+returned by different transactions should be different. Both reliable and unreliable
+networks are tested.
 
 \subsubsection{Two Phase Commit}
 
-To test that our \textit{two-phase commit} protocol is correct we need 
-to manually crash the system at different point and reboot the system 
-to see if it can still run properly. A \textit{failpoint} parameter is 
-passed into both the client and the server when the transactions run.  
-When the machine(client/server) runs into the position indicated by 
-the \textit{failpoint}, the machine should delete all the information 
-stored in the main memory. The data stored on the disk, however, is 
+To test that our \textit{two-phase commit} protocol is correct we need to manually
+crash the system at different point and reboot the system to see if it can still run
+properly. A \textit{failpoint} parameter is passed into both the client and the
+server when the transactions run.  When the machine(client/server) runs into the
+position indicated by the \textit{failpoint}, the machine should delete all the
+information stored in the main memory. The data stored on the disk, however, is
 preserved.
 
 After faiure, the Reboot() function in either the client or the server 
@@ -327,12 +324,11 @@ by reading from the disks.
 
 \section{Performance Results and Refinement}
 
-In this section, our system is evaluated in several different aspects.  
-In particular, we will first evaluate the overhead of using paxos to 
-reach consensus within a group. Then we evaluate the overhead of disk 
-operations in our 2PC. Finally, we compare the two concurrency control 
-schemes introduced in Section \textcolor{red}{XXX}. All the 
-experiments are carried out on the athena server at MIT. 
+In this section, our system is evaluated in several different aspects.  In
+particular, we will first evaluate the overhead of using paxos to reach consensus
+within a group. Then we evaluate the overhead of disk operations in our 2PC. Finally,
+we compare the two concurrency control schemes introduced in Section~\ref{sec:?}. All the
+experiments are carried out on the athena server at MIT.
 
 \subsection{Overhead of Paxos}
 
@@ -392,7 +388,7 @@ We also implemented various test cases to verify the correctness of
 our implementation. Finally, we evaluated the performance of our 
 system and studied tradeoffs in different design decisions.
 
-\textcolor{red}{TODO : add some thoughts? like what we learned?}
+%\textcolor{red}{TODO : add some thoughts? like what we learned?}
 
 \bibliographystyle{abbrv}
 \bibliography{vldb_sample}  % vldb_sample.bib is the name of the Bibliography in this case

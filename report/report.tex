@@ -355,14 +355,31 @@ paxos protocol.
 	\label{fig:locking-granularity}
 \end{figure}
 
-In \cref{fig:locking-granularity}
+\cref{fig:locking-granularity} shows the performance comparison 
+between per-group locking vs. per-row locking. The experiment involves 
+three clients and three groups with three servers in each group. The 
+database contains 1000 records. Each transaction uniform randomly 
+touches six records, two in each group. 
+
+Clearly, per-row locking significantly outperforms per-group locking.  
+Per-row locking allows two transactions to run concurrently as long as 
+their data sets do not overlap. In our setting, most transactions 
+access disjoint sets of data which is the best scenario for per-row 
+locking. 
 
 \section{Discussion}
 
+To summarize, our project is built on top of Lab4. We enhanced the 
+pure key-value storage engine to a transactional processing engine.
+Then, persistent paxos and persistent data storage are added. And 
+two-phase commit is supported on top of these. 
 
-% The following two commands are all you need in the
-% initial runs of your .tex file to
-% produce the bibliography for the citations in your paper.
+We also implemented various test cases to verify the correctness of 
+our implementation. Finally, we evaluated the performance of our 
+system and studied tradeoffs in different design decisions.
+
+\textcolor{red}{TODO : add some thoughts? like what we learned?}
+
 \bibliographystyle{abbrv}
 \bibliography{vldb_sample}  % vldb_sample.bib is the name of the Bibliography in this case
 % You must have a proper ".bib" file

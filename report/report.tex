@@ -81,22 +81,25 @@ Shuotao Xu\\
 \maketitle
 
 \begin{abstract}
-  We implemented a distributed transaction processing system where data is
-  partitioned and mapped to different shards. All shards are replicated to enhance
-  the availability and durability of the system. The database model is simple
-  key-value store inherited from Lab 4. The objectives of the project are 1) to
-  process transaction using two phase commit and guarantee atomic execution, 2) to
-  persistently store data and server status on disk to tolerate server failures in
-  time of reboot. The requests of a transaction consist of GET, PUT, and ADD. To
-  simplify implementation, the only scenario of abort of a transaction is that it has
-  an add request that results a negative value. Firstly, we implemented a
-  coarse-grained locking scheme where a transaction locks the groups it
-  touches. Secondly, We implemented test cases to verify the correctness of the
-  system under different failure scenarios including unreliable networks and server
-  failures. Then we benchmark our system with synthetic workloads that varies with
-  parameters like read/write ratios of a transaction, number of clients and so
-  on. Lastly, in order to achieve better performance gains, we refined our system
-  with a fine-grained locking scheme where a transaction locks the keys it touches.
+We implemented a distributed transaction processing system where data 
+is partitioned and mapped to different shards. All shards are 
+replicated to enhance the availability and durability of the system.  
+The database model is simple key-value store inherited from Lab 4.  
+The objectives of the project are 1) to process transaction using two 
+phase commit and guarantee atomic execution, 2) to persistently store 
+data and server status on disk to tolerate server failures. The 
+requests of a transaction consist of GET, PUT, and ADD. To simplify 
+implementation, the only scenario of aborting a transaction is that it 
+has an add request that results a negative value. Firstly, we 
+implemented a coarse-grained locking scheme where a transaction locks 
+the groups it touches. Secondly, We implemented test cases to verify 
+the correctness of the system under different failure scenarios 
+including unreliable networks and server failures. Then we benchmark 
+our system with synthetic workloads that varies with parameters like 
+read/write ratios of a transaction, number of clients and so on.  
+Lastly, in order to achieve better performance gains, we refined our 
+system with a fine-grained locking scheme where a transaction locks 
+the keys it touches.
 \end{abstract}
 
 
@@ -107,112 +110,132 @@ Shuotao Xu\\
 
 \section{Implementation Details}
 
-Our persistent key value store is constructed such that each key of type string is
-mapped to a value of type integer. We confined the type of values to integer to allow
-arithmetic operations on the key-value pairs. The data of our systems are partitioned
-into different shards. A group of servers are responsible for a distinct subset of
-shards, and all data within a group are replicated. Our system supports atomic
-transaction, where a transaction is an ordered group of requests such as puts, gets
-and etc. We also support persistency, where all committed transactions are recorded to
-disk. Our persistent key-value store is useful such that it could be a high
-performance inventory management system.
+Our persistent key value store is constructed such that each key of 
+type string is mapped to a value of type integer. We confined the type 
+of values to integer to allow arithmetic operations on the key-value 
+pairs. The data of our systems are partitioned into different shards.  
+A group of servers are responsible for a distinct subset of shards, 
+and all the data within a group are replicated. Our system supports 
+atomic transactions, where a transaction is an ordered group of 
+requests such as puts, gets and etc. We also support persistency, 
+where all committed transactions are recorded to disk. Our persistent 
+key-value store can model applications like an inventory management 
+system or a bank account system.
 
 \subsection{Transaction Support}
 
-Our system supports transaction consisting of requests of PUTs, GETs, and ADDs.
-\begin{itemize} 
-\item a PUT updates the value associated with the key
+Our system supports transaction consisting of requests of PUTs, GETs, 
+and ADDs.
+\begin{itemize} \item a PUT updates the value associated with the key
 \item a GET returns the value associated with the key
-\item an ADD adds a value (could be negative) to the previous value associated with
-  the key
+\item an ADD adds a value (could be negative) to the previous value 
+associated with the key
 \end{itemize}
 
-In particularly, the transaction support of our system ensures the following properties. 
+In particularly, the transaction support of our system ensures the 
+following properties. 
 
-\textbf{Consistency} Our system allows multiple clients to send transactions
-concurrently. Specifically, our database enforce sequential consistency such that the
-effects of concurrent transactions appears as some sequential order. To enable
-sequential consistency, the client should lock the groups that a transaction touches
-before execution. And since we will have multiple servers within each group, we will
-ensure consistency inside the group with Paxos, to guarantee a global ordering of the
-operations within a group.
+\textbf{Consistency} Our system allows multiple clients to send 
+transactions concurrently. Specifically, our database enforce 
+sequential consistency such that the effects of concurrent 
+transactions appears as some sequential order.  To enable sequential 
+consistency, the client should lock the groups that a transaction 
+touches before execution. And since we will have multiple servers 
+within each group, we will ensure consistency inside the group with 
+Paxos, to guarantee a global ordering of the operations within a 
+group.
 
-\textbf{Atomicity} The transactions need also be atomic, i.e. either all of the
-requests of the transaction are executed or none are executed. We ensure atomicity of
-the transaction with two phase commit protocol.
+\textbf{Atomicity} The transactions need also be atomic, i.e. either 
+all of the requests of the transaction are executed or none are 
+executed. We ensure atomicity of the transaction with two phase commit 
+protocol.
 
-\textbf{Persistency} All the effects of a committed transaction on key value store
-are written on disk.
+\textbf{Persistency} All the effects of a committed transaction on key 
+value store are written on disk.
 
-\textbf{Fault-tolerant} Our system ensures the transaction processing is
-fault-tolerant. On the server sides, the Paxos implementation in Lab 3 has already
-ensured tolerance under network failures. In our project, we will modified Lab 3 such
-that Paxos can also handle server crashes. On client side, we will also record its
-transaction processing status on disk, so that after crash, the client will know at
-which point it was processing the transaction.
+\textbf{Fault-tolerant} Our system ensures the transaction processing 
+is fault-tolerant. On the server sides, the Paxos implementation in 
+Lab 3 has already ensured tolerance under network failures. In our 
+project, we will modified Lab 3 such that Paxos can also handle server 
+crashes. On client side, we will also record its transaction 
+processing status on disk, so that after crash, the client will know 
+at which point it was processing the transaction.
 
 \subsubsection{Persistent Paxos}
 
 We made the Paxos persistent so that it can tolerate server crash.
 
-Whenever any of the propose number(n\_p), accepted number(n\_a) and accepted
-value(v\_a) is modified, all of them are written to the file system with the file
-name in the following format: \textit{SERVERNAME\_INS\#.txt}.
+Whenever any of the propose number(n\_p), accepted number(n\_a) and 
+accepted value(v\_a) is modified, all of them are written to the file 
+system with the file name in the following format: 
+\textit{SERVERNAME\_INS\#.txt}.
 
-When the Paxos log is truncated, the corresponding files are also deleted. When a
-server reboots after failure, it will reconstruct the Paxos instances by reading from
-the file system. We use a lazy reconstruction approach where an instance is read and
-reconstructed only when it is touched.
+When the Paxos log is truncated, the corresponding files are also 
+deleted. When a server reboots after failure, it will reconstruct the 
+Paxos instances by reading from the file system. We use a lazy 
+reconstruction approach where an instance is read and reconstructed 
+only when it is touched.
 
-Moreover, we added a new function call, Poll(seq int), to the Paxos, to peek the
-status of a Paxo instance at some sequence number. When Poll(seq int) is called, the
-Paxos server first checks locally if the Paxos instance of sequence number
-\textit{seq} has been decided (by calling Status()). If not, RPCs are sent to peer
-servers and the status of the instance is returned. Note that Poll() is different
-from Status() since Status() only checks the Paxos instance on local server.
+Moreover, we added a new function call, Poll(seq int), to the Paxos, 
+to peek the status of a Paxo instance at some sequence number. When 
+Poll(seq int) is called, the Paxos server first checks locally if the 
+Paxos instance of sequence number \textit{seq} has been decided (by 
+calling Status()). If not, RPCs are sent to peer servers and the 
+status of the instance is returned. Note that Poll() is different
+from Status() since Status() only checks the Paxos instance on local 
+server.
 
-Poll is used to check whether a particular instance has been decided. This simplifies
-our system implementation as explained in Section~\ref{sec:lock}.
+Poll is used to check whether a particular instance has been decided.  
+This simplifies our system implementation as explained in 
+Section~\ref{sec:lock}.
 
 
 \subsubsection{Locking Scheme}
 \label{sec:lock}
 
-We uses locking to ensure sequential consistency of concurrent transactions.
+We uses locking to ensure sequential consistency of concurrent 
+transactions.
 
-Transactions are initiated at the client side. A client breaks down a transaction,
-and sends the requests to a server in the corresponding group. Upon receiving the
-requests, the server will start a Paxos instance to agree on the transaction. This
-Paxos instance locks the whole group for the transaction.
+Transactions are initiated at the client side. A client breaks down a 
+transaction, and sends the requests to a server in the corresponding 
+group. Upon receiving the requests, the server will start a Paxos 
+instance to agree on the transaction. This Paxos instance locks the 
+whole group for the transaction.
 
-To avoid deadlocks, the clients should send requests to the groups sequentially
-following a fixed order, such as the order of increasing group IDs.
+To avoid deadlocks, the clients should send requests to the groups 
+sequentially following a fixed order, such as the order of increasing 
+group IDs. Groups with larger gids are locked only after groups with 
+smaller gids are locked. This prevents the scenario where two 
+transactions each locks a group and requests to lock the other's 
+group.
 
-To tolerate failures, we have Paxos handle failures on server side. On client side,
-when a transaction starts, the client will record its status as \textit{started} on
-disk. When all groups are properly locked, the on-disk status of the client changes
-to \textit{locked}.
+To tolerate failures, we have Paxos handle failures on server side. On 
+client side, when a transaction starts, the client will record its 
+status as \textit{started} on disk. When all groups are properly 
+locked, the on-disk status of the client changes to \textit{locked}.
 
-The servers will periodically use Poll() to catch up in the Paxos log with other
-replicas. Otherwise, there is possibility that two of the servers will be left far
-behind in the Paxos log and unable to proceed. For example, after a client locks a
-server for a transaction, it seeks other servers to execute two phase commit in
-Section~\ref{sec:2pc}. Later the client send request to this server to lock for a new
-transaction. That server still grabs lock from previous transaction, rejects the new
-transaction request and waits for the prepare message of previous transaction, which
-will never come. In this case, the server stalls, and the new transaction can not
+The servers will periodically use Poll() to catch up in the Paxos log 
+with other replicas. Otherwise, there is possibility that some of the 
+servers will be left far behind in the Paxos log and take a long time 
+to catch up. For example, after a client locks a server for a 
+transaction, it seeks other servers to execute two phase commit in
+Section~\ref{sec:2pc}. Later the client send request to this server to 
+lock for a new transaction. That server still grabs lock from previous 
+transaction, rejects the new transaction request and waits for the 
+prepare message of previous transaction, which will never come. In 
+this case, the server stalls, and the new transaction can not
 proceed.
 
-This is the first step of transaction processing from client's perspective, we call
-it \textit{insert transaction}.
-
+This is the first step of transaction processing from client's 
+perspective, we call it \textit{insert transaction}.
 
 \subsubsection{Two Phase Commit}
 \label{sec:2pc}
 
-After client hears from all groups that the servers have been properly locked for the
-transaction, it initializes two-phase commit(2pc) protocol as described in Figure
-\ref{fig:2pc}, where the records with * are written into non-volatile storage.
+After client hears from all groups that the servers have been properly 
+locked for the transaction, it initializes two-phase commit(2pc) 
+protocol as described in Figure~\ref{fig:2pc}, where the records with 
+* are written into non-volatile storage.
 
 \begin{figure}[h!]
   \centering
@@ -221,38 +244,40 @@ transaction, it initializes two-phase commit(2pc) protocol as described in Figur
   \label{fig:2pc}
 \end{figure}
 
-The client will first send prepare messages to all the groups that a transaction
-involves in parallel to make sure the transaction can be executed. The servers
-pre-run the transaction. And if there is an ADD request that results negative
-integer, it responses abort. Otherwise, the server responses prepare\_ok. The
-client waits for all prepare responses from different groups. And depends on the
-prepare messages, client 1) sends out reply to application and 2) either sends out
-commit or abort message to servers. After servers sees commit, it will write the
-result of the transaction into persistent storage.
+The client will first send prepare messages to all the groups that a 
+transaction involves in parallel to make sure the transaction can be 
+executed. The servers pre-run the transaction. And if there is an ADD 
+request that results negative integer, it responses abort. Otherwise, 
+the server responses prepare\_ok. The client waits for all prepare 
+responses from different groups. And depends on the prepare messages, 
+client 1) sends out reply to application and 2) either sends out
+commit or abort message to servers. After servers sees commit, it will 
+write the result of the transaction into persistent storage.
 
-As shown in Figure \ref{fig:2pc}, two-phase commit requires the coordinator(client)
-to write once to the persistent storage (commit/abort) and subordinate(servers) to
-write twice to the persistent storage (prepare\_ok/abort and commit/abort). In our
-implementation, the server always need to make consensus on those two messages
-through Paxos. Since our Paxos is already persistent, two phase commit is
-automatically achieved at the server side. 
+As shown in Figure \ref{fig:2pc}, two-phase commit requires the 
+coordinator(client) to write once to the persistent storage
+(commit/abort) and subordinate(servers) to write twice to the 
+persistent storage (prepare\_ok/abort and commit/abort). In our
+implementation, the server always need to make consensus on those two 
+messages through Paxos. Since our Paxos is already persistent, two 
+phase commit is automatically achieved at the server side. 
 
-At the client side, we added an extra disk operation to make the state of the current
-transaction persistent. When a client reboots, it will first read the disk for the
-latest state before it crashed and repeat the last operation if necessary. 
+At the client side, we added an extra disk operation to make the state 
+of the current transaction persistent. When a client reboots, it will 
+first read the disk for the latest state before it crashed and repeat 
+the last operation if necessary. 
 
-The servers, on the other hand, should passively wait for the client’s requests to
-insert Paxos instance. So it does not have to recover the states up to date
-immediately. We take a lazy approach to recover the servers: only replay Paxos log
-and recover the states when the incoming request depends on it. For example, a server
-after reboot may receive a commit request without knowing the result of the
-transaction. It will replay the Paxos log at this point and read the transaction
-results from the log and serve the commit request.
+The servers, on the other hand, should passively wait for the client’s 
+requests to insert Paxos instance. So it does not have to recover the 
+states up to date immediately. We take a lazy approach to recover the 
+servers: only replay Paxos log and recover the states when the 
+incoming request depends on it. For example, a server after reboot may 
+receive a commit request without knowing the result of the 
+transaction. It will replay the Paxos log at this point and read the 
+transaction results from the log and serve the commit request.
 
-The prepare and commit phases in 2pc are the second and third steps of transaction
-processing from client's perspective.
-
-
+The prepare and commit phases in 2pc are the second and third steps of 
+transaction processing from client's perspective.
 
 \subsection{Testing}
 
@@ -345,9 +370,9 @@ should go through the paxos consensus described in Section \textcolor
 (\cref{fig:paxos-persistent}) shows the overhead of paxos protocol. 
 
 \begin{figure}[t!]
-    \centering
+	\centering
 	\includegraphics[width=0.6\columnwidth]{figs/paxos_persistent.pdf}
-    \caption{
+	\caption{
 		Performance overhead of paxos protocol and persistent storage.
 	}
 	\label{fig:paxos-persistent}
@@ -363,7 +388,7 @@ of paxos protocol.
 \begin{figure}[t!]
 	\centering
 	\includegraphics[width=0.6\columnwidth]{figs/locking_granularity.pdf}
-    \caption{
+	\caption{
 		Performance comparison between different locking granularity.
 	}
 	\label{fig:locking-granularity}
@@ -395,7 +420,8 @@ system and studied tradeoffs in different design decisions.
 \textcolor{red}{TODO : add some thoughts? like what we learned?}
 
 \bibliographystyle{abbrv}
-\bibliography{vldb_sample}  % vldb_sample.bib is the name of the Bibliography in this case
+\bibliography{vldb_sample}  % vldb_sample.bib is the name of the 
+Bibliography in this case
 % You must have a proper ".bib" file
 %  and remember to run:
 % latex bibtex latex latex

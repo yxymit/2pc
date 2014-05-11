@@ -247,7 +247,7 @@ processing from client's perspective.
 \subsection{Testing}
 
 We implemented various test cases to make sure our implementation 
-works properly. In general, our test cases fall into two categories: 
+works properly. In general, our tests fall into two categories: 
 \textit{transaction testing} and \textit{2pc testing}. 
 
 \subsubsection{Transcation Support}
@@ -258,7 +258,7 @@ atomicity, we need to make sure that a transaction either completely
 commits or completely aborts. Partial transactions are not allowed.  
 For consistency, the database should support multiple clients sending 
 requests concurrently and the results are equivalent to some order of 
-sequential execution. We designed the following two test cases 
+sequential execution. We designed the following test cases 
 accordingly.
 
 \textbf{Test 1} A single client sends requests to three groups of 
@@ -310,6 +310,10 @@ Case 3: Server fails after replying the prepare state to the client.
 Case 4: Server fails after writing the commit record to disk but 
 before replying to the client.
 
+Fianlly, we also tested the persistent database storage. In this test, 
+the system is first loaded with data and then the whole system 
+crashes. After reboot, the system should recover all the missing data 
+by reading from the disks. 
 
 \section{Performance Results and Refinement}
 
@@ -340,9 +344,9 @@ should go through the paxos consensus described in Section \textcolor
 \end{figure}
 
 \cref{fig:paxos-persistent} also shows the overhead of writing the 
-records to persistent storage, thus tolerate system crashes. It turns 
-out that the disk writing overhead is smaller than the overhead of 
-paxos protocol. 
+records to persistent storage in order to tolerate system crashes. It 
+turns out that the disk writing overhead is smaller than the overhead 
+of paxos protocol. 
 
 \subsection{Locking Granularity}
 
